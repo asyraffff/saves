@@ -879,7 +879,13 @@ function setup() {
   ss.setActiveSheet(browse);
 
   if (!PropertiesService.getScriptProperties().getProperty('TOKEN')) newToken_();
-  showToken();
+  // No popup here: a popup in the sheet tab blocks the run (and times out) if nobody clicks OK.
+  console.log(shortcutDetails_());
+  try {
+    ss.toast('Setup complete. Use Saves → Show Shortcut token to see your token.', 'Saves', 8);
+  } catch (err) {
+    /* no sheet open */
+  }
 }
 
 // Newest first; a 🧵/🎵 icon instead of a Source column; a short "Open ↗" link instead of the URL.
@@ -903,7 +909,7 @@ function newToken_() {
   return token;
 }
 
-function showToken() {
+function shortcutDetails_() {
   const token = PropertiesService.getScriptProperties().getProperty('TOKEN') || newToken_();
   let url = '';
   try {
@@ -911,9 +917,15 @@ function showToken() {
   } catch (err) {
     /* not deployed yet */
   }
-  const text =
-    'Shortcut token:\n' + token + '\n\n' +
-    (url ? 'Web app URL:\n' + url : 'Web app URL: not deployed yet. Do Deploy → New deployment (see guide), then copy the Web app URL.');
+  // From the editor this returns the /dev test address, which the Shortcut must not use.
+  const urlText = url && /\/exec$/.test(url)
+    ? 'Web app URL:\n' + url
+    : 'Web app URL: copy it from Deploy → Manage deployments (it ends in /exec).';
+  return 'Shortcut token:\n' + token + '\n\n' + urlText;
+}
+
+function showToken() {
+  const text = shortcutDetails_();
   console.log(text);
   const ui = ui_();
   if (ui) ui.alert('Saves: Shortcut details', text, ui.ButtonSet.OK);
