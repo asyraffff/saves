@@ -649,12 +649,18 @@ function setup() {
     folders.getRange(2, 1, 3, 1).setValues([['⭐ Favourites'], ['Ideas'], ['Recipes']]);
   }
 
-  // Folders column on Saves: dropdown of your folders. Turn on "Allow multiple selections" by hand (see guide).
-  const folderRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(folders.getRange('A2:A'), true)
-    .setAllowInvalid(true)
-    .build();
-  saves.getRange(2, COL.folders, saves.getMaxRows() - 1, 1).setDataValidation(folderRule);
+  // Folders column on Saves: dropdown of your folders. "Allow multiple selections" can only be
+  // ticked by hand (see guide), and Sheets only allows it when invalid input is rejected.
+  // Only add the rule if there isn't one yet, so re-running setup keeps that checkbox on.
+  const folderCells = saves.getRange(2, COL.folders, saves.getMaxRows() - 1, 1);
+  if (!folderCells.getDataValidation()) {
+    folderCells.setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInRange(folders.getRange('A2:A'), true)
+        .setAllowInvalid(false)
+        .build(),
+    );
+  }
 
   // ── Browse ──
   const browse = getOrCreateSheet_(BROWSE, 0);

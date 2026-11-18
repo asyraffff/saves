@@ -35,7 +35,9 @@ Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Fo
 ## 5. Let a post have several folders
 1. Reload the sheet. A **Saves** menu appears. **Saves → Show Shortcut token** shows your token and the Web app URL together.
 2. Open the **Saves** tab and click cell **F2**. It has a dropdown arrow.
-3. Open **Data → Data validation**, click the rule shown on the right, tick **Allow multiple selections**, then click **Done**.
+3. Open **Data → Data validation** and click the rule shown on the right.
+4. Click **Advanced options** and set **If the data is invalid** to **Reject the input**. Set **Display style** to **Chip** if that option is shown.
+5. Tick **Allow multiple selections** and click **Done**. It stays greyed out until step 4 is done.
 
 ## 6. On your iPhone
 1. Install **Google Sheets** from the App Store and open the **Saves** sheet.
