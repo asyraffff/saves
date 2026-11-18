@@ -234,25 +234,44 @@ function fetchText_(url, ua) {
   }
 }
 
-/** vm.tiktok.com / vt.tiktok.com / tiktok.com/t/ → full video URL. */
+/**
+ * Short/share links → the real post URL:
+ * vm.tiktok.com, vt.tiktok.com, tiktok.com/t/…, threads.com/share/…, threads.com/t/…
+ */
 function expandShortLink_(url) {
-  if (!isTikTokShortLink(url)) return url;
+  if (!isShortLink(url)) return url;
+  let current = url;
   try {
-    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: false, headers: { 'User-Agent': UA_IPHONE } });
-    const headers = res.getAllHeaders();
-    const loc = headers.Location || headers.location;
-    if (loc) return String(Array.isArray(loc) ? loc[0] : loc);
+    // Follow up to 3 HTTP redirects by hand, stopping at the first real post URL.
+    for (let i = 0; i < 3 && isShortLink(current); i++) {
+      const res = UrlFetchApp.fetch(current, { muteHttpExceptions: true, followRedirects: false, headers: { 'User-Agent': UA_IPHONE } });
+      const headers = res.getAllHeaders();
+      const loc = headers.Location || headers.location;
+      if (!loc) break;
+      current = resolveUrl(String(Array.isArray(loc) ? loc[0] : loc), current);
+    }
+    // Threads share pages may not redirect; their page says where the post is.
+    if (isShortLink(current) && detectSource(current) === 'threads') {
+      const html = fetchText_(current, UA_BOT);
+      const canonical = html && canonicalFromHtml(html);
+      if (canonical && isThreadsPostUrl(canonical)) current = canonical;
+    }
   } catch (err) {
-    /* keep the short link */
+    /* keep what we have */
   }
-  return url;
+  return current;
 }
 
 function fetchPreview_(url) {
   const source = detectSource(url);
   if (source === 'threads') {
     const html = fetchText_(url, UA_BOT);
-    return Object.assign({ url: url }, html ? parseThreadsHtml(html, url) : { author: authorFromUrl(url), text: null });
+    if (!html) return { url: url, author: authorFromUrl(url), text: null };
+    const canonical = canonicalFromHtml(html);
+    return Object.assign(
+      { url: canonical && isThreadsPostUrl(canonical) ? normalizeUrl(canonical) : url },
+      parseThreadsHtml(html, url),
+    );
   }
   if (source === 'tiktok') {
     const uas = [UA_BOT, UA_IPHONE];
@@ -301,6 +320,30 @@ function isTikTokShortLink(url) {
   return /^(vm|vt)\.tiktok\.com$/.test(host) || (detectSource(url) === 'tiktok' && pathOf(url).indexOf('/t/') === 0);
 }
 
+function isThreadsPostUrl(url) {
+  return detectSource(url) === 'threads' && /^\/@[^/]+\/post\/[A-Za-z0-9_-]+/.test(pathOf(url));
+}
+
+/** Links that hide the real post: TikTok short links and Threads share links. */
+function isShortLink(url) {
+  if (isTikTokShortLink(url)) return true;
+  return detectSource(url) === 'threads' && /^\/(share|t)\//.test(pathOf(url));
+}
+
+function resolveUrl(loc, base) {
+  if (/^https?:\/\//i.test(loc)) return loc;
+  const origin = String(base).match(/^https?:\/\/[^/?#]+/i)[0];
+  return origin + (loc.charAt(0) === '/' ? loc : '/' + loc);
+}
+
+/** The page's own idea of its URL (og:url or <link rel="canonical">). */
+function canonicalFromHtml(html) {
+  const og = metaTag(html, 'og:url');
+  if (og) return og;
+  const m = html.match(/<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+  return m ? decodeEntities(m[1]) : null;
+}
+
 /** Canonical form so the same post shared twice is recognised. */
 function normalizeUrl(url) {
   const source = detectSource(url);
@@ -344,8 +387,10 @@ function metaTag(html, prop) {
 }
 
 function parseThreadsHtml(html, url) {
-  const handle = authorFromUrl(url);
-  const title = metaTag(html, 'og:title');
+  const title = metaTag(html, 'og:title'); // "Mark Zuckerberg (@zuck) on Threads"
+  const fromTitle = title && title.match(/\(@([^)\s]+)\)/);
+  const canonical = canonicalFromHtml(html);
+  const handle = authorFromUrl(url) || (fromTitle && fromTitle[1]) || (canonical ? authorFromUrl(canonical) : null);
   if (!title || !/on Threads/i.test(title) || /log in/i.test(title)) return { author: handle, text: null };
   const desc = metaTag(html, 'og:description');
   return { author: handle, text: desc ? desc.trim() || null : null };
@@ -605,7 +650,7 @@ function deleteFolderPrompt() {
 }
 
 function fillMissingDetails() {
-  const rows = readRows_(sheet_(SAVES)).filter(function (r) { return r.link && !r.text; });
+  const rows = readRows_(sheet_(SAVES)).filter(function (r) { return r.link && (!r.text || !r.author || isShortLink(r.link)); });
   rows.slice(0, 50).forEach(fillDetails_);
   const ui = ui_();
   if (ui) ui.alert('Checked ' + Math.min(rows.length, 50) + ' post(s).');

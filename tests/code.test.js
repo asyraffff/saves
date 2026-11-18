@@ -12,7 +12,13 @@ const TIKTOK_DATA = {
 };
 const TIKTOK_HTML = `<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">${JSON.stringify(TIKTOK_DATA)}</script>`;
 
+const SHARE_HTML = `<meta property="og:title" content="Amir (&#064;chef.amir) on Threads" />
+<meta property="og:description" content="Mug cake recipe" />
+<meta property="og:url" content="https://www.threads.com/@chef.amir/post/DAbC123xyz" />`;
+
 function fakeWeb(url) {
+  if (url.startsWith('https://www.threads.com/share/')) return { body: SHARE_HTML };
+  if (url.startsWith('https://www.threads.com/@chef.amir/post/')) return { body: SHARE_HTML };
   if (url.startsWith('https://vm.tiktok.com/')) {
     return { code: 302, headers: { Location: 'https://www.tiktok.com/@/video/123?_r=1&u_code=abc' } };
   }
@@ -96,6 +102,21 @@ describe('Shortcut flow', () => {
     post({ action: 'assign', id: again.id, folders: 'Recipes\nIdeas' });
     expect(savesRows()).toHaveLength(1);
     expect(savesRows()[0][5]).toBe('Ideas, Recipes');
+  });
+
+  it('turns a Threads /share/ link into the real post URL with author, and spots duplicates', () => {
+    const first = post({ action: 'save', input: 'https://www.threads.com/share/_zMiAbCdEf/' });
+    expect(first.prompt).toBe('Save @chef.amir to:');
+    let [row] = savesRows();
+    expect(row[4]).toBe('https://www.threads.com/@chef.amir/post/DAbC123xyz');
+    post({ action: 'assign', id: first.id, folders: 'Recipes' });
+    [row] = savesRows();
+    expect(row[2]).toBe('@chef.amir');
+    expect(row[3]).toBe('Mug cake recipe');
+
+    const again = post({ action: 'save', input: 'https://www.threads.net/@chef.amir/post/DAbC123xyz?xmt=1' });
+    expect(again.existed).toBe(true);
+    expect(savesRows()).toHaveLength(1);
   });
 
   it('cancelled folder pick leaves the post in the Inbox', () => {
