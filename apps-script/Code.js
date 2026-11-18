@@ -12,9 +12,27 @@ const SAVES = 'Saves';
 const FOLDERS = 'Folders';
 const BROWSE = 'Browse';
 const NEW_FOLDER = '➕ New folder…';
-const HEADERS = ['Saved', 'Source', 'Author', 'Text', 'Link', 'Folders', 'Note', 'ID'];
-const COL = { saved: 1, source: 2, author: 3, text: 4, link: 5, folders: 6, note: 7, id: 8 };
+const ADD_NOTE = '📝 Add note…';
+// Planning columns were added after ID (column H) so existing sheets keep working.
+const HEADERS = ['Saved', 'Source', 'Author', 'Text', 'Link', 'Folders', 'Note', 'ID', 'Status', 'Rating', 'Price', 'Contact'];
+const COL = { saved: 1, source: 2, author: 3, text: 4, link: 5, folders: 6, note: 7, id: 8, status: 9, rating: 10, price: 11, contact: 12 };
 const NCOLS = HEADERS.length;
+const STATUSES = ['To check', 'Shortlisted', 'Contacted', 'Booked', 'Not for us', 'Archived'];
+const ANY_STATUS = 'All active'; // everything except "Not for us" and "Archived"
+const RATINGS = ['⭐', '⭐⭐', '⭐⭐⭐', '⭐⭐⭐⭐', '⭐⭐⭐⭐⭐'];
+const SORTS = ['Newest first', 'Oldest first', 'Top rated'];
+
+// Names that must never become folders: Browse views, and Shortcut variable names that
+// end up as plain text when a Shortcut field isn't set to the variable.
+const NOT_FOLDERS = [
+  'inbox', 'all saves', 'chosen', 'choosen', 'chosen item', 'choosen item', 'newfolder', 'new folder',
+  'note', 'add note', 'provided input', 'dictionary value', 'combined text', 'shortcut input', 'text', 'saved',
+];
+
+function isNotFolder(name) {
+  const n = String(name || '').replace(/[➕📝…]/g, '').trim().toLowerCase();
+  return !n || NOT_FOLDERS.indexOf(n) !== -1;
+}
 const SEP = ', '; // how several folders are written in one cell (same as Sheets multi-select chips)
 
 const UA_BOT = 'Mozilla/5.0 (compatible; SavesBot/1.0; +https://github.com/asyraffff/saves)';
@@ -105,7 +123,7 @@ function actionSave_(body) {
     }
 
     const id = Utilities.getUuid().slice(0, 8);
-    const row = [new Date(), sourceLabel(source), who ? '@' + who : '', '', url, '', note, id];
+    const row = [new Date(), sourceLabel(source), who ? '@' + who : '', '', url, '', note, id, 'To check', '', '', ''];
     sheet.getRange(sheet.getLastRow() + 1, 1, 1, NCOLS).setValues([row.map(safeCell)]);
     return { id: id, existed: false, prompt: 'Save ' + label + ' to:', in_folders: [], folders: picker.labels };
   } finally {
@@ -120,11 +138,15 @@ function actionAssign_(body) {
 
   const picked = (Array.isArray(body.folders) ? body.folders : String(body.folders || '').split(/\r?\n/))
     .map(function (s) { return String(s); })
-    .filter(function (s) { return s.trim() && s.trim() !== NEW_FOLDER && s.trim().indexOf('⚠️') !== 0; });
+    .filter(function (s) {
+      const t = s.trim();
+      return t && t !== NEW_FOLDER && t !== ADD_NOTE && t.indexOf('⚠️') !== 0;
+    });
   const newFolder = String(body.new_folder || '').trim();
 
   let row;
   let added = [];
+  let noteAdded = false;
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -136,11 +158,16 @@ function actionAssign_(body) {
     const picker = buildPicker(listFolders_(), getRecent_());
     added = picked.map(function (label) { return labelToPath(label, picker.map); }).filter(Boolean);
     if (newFolder) added.push(cleanFolderName(newFolder));
-    added = uniq(added.filter(Boolean));
+    added = uniq(added.filter(function (f) { return f && !isNotFolder(f); }));
     added.forEach(ensureFolder_);
     const merged = uniq(splitFolders(row.folders).concat(added));
     sheet.getRange(row.rowNum, COL.folders).setValue(safeCell(merged.join(SEP)));
-    if (typeof body.note === 'string' && body.note.trim()) sheet.getRange(row.rowNum, COL.note).setValue(safeCell(body.note.trim()));
+    // A note typed in the Shortcut is added to any existing note.
+    const note = typeof body.note === 'string' ? body.note.trim() : '';
+    noteAdded = Boolean(note && !isNotFolder(note));
+    if (noteAdded && row.note.indexOf(note) === -1) {
+      sheet.getRange(row.rowNum, COL.note).setValue(safeCell(row.note ? row.note + '\n' + note : note));
+    }
     row.folders = merged.join(SEP);
     if (added.length) setRecent_(added);
   } finally {
@@ -152,7 +179,38 @@ function actionAssign_(body) {
     if (!scheduleBackgroundFill_()) fillDetails_(row);
   }
 
-  return { ok: true, folders: added, message: added.length ? 'Saved to ' + added.join(SEP) : 'Saved to Inbox' };
+  const where = added.length ? 'Saved to ' + added.join(SEP) : 'Saved to Inbox';
+  return { ok: true, folders: added, message: where + (noteAdded ? ' · 📝 note added' : '') };
+}
+
+/**
+ * Removes folders that should never exist (see NOT_FOLDERS), from the Folders tab and from
+ * every post. Runs in setup. Returns the names removed.
+ */
+function cleanUpJunkFolders_() {
+  const removed = [];
+  const folders = sheet_(FOLDERS);
+  for (let r = folders.getLastRow(); r >= 2; r--) {
+    const name = String(folders.getRange(r, 1).getValue());
+    if (name.trim() && isNotFolder(cleanFolderName(name))) {
+      removed.push(name.trim());
+      folders.deleteRow(r);
+    }
+  }
+  const saves = sheet_(SAVES);
+  const last = saves.getLastRow();
+  if (last >= 2) {
+    const range = saves.getRange(2, COL.folders, last - 1, 1);
+    range.setValues(range.getValues().map(function (v) {
+      const kept = splitFolders(v[0]).filter(function (f) {
+        if (!isNotFolder(f)) return true;
+        if (removed.indexOf(f) === -1) removed.push(f);
+        return false;
+      });
+      return [kept.join(SEP)];
+    }));
+  }
+  return uniq(removed);
 }
 
 // ═════════════════════════ Recent folders & background work ═════════════════════════
@@ -224,6 +282,10 @@ function readRows_(sheet) {
       folders: String(v[5]),
       note: String(v[6]),
       id: String(v[7]),
+      status: String(v[8]),
+      rating: String(v[9]),
+      price: String(v[10]),
+      contact: String(v[11]),
     };
   });
 }
@@ -242,6 +304,7 @@ function listFolders_() {
 
 /** Adds "Recipes / Desserts" (and its parent "Recipes") to the Folders tab if missing. */
 function ensureFolder_(name) {
+  if (isNotFolder(name)) return;
   const existing = listFolders_().map(function (f) { return f.toLowerCase(); });
   const parts = splitPath(name);
   const sheet = sheet_(FOLDERS);
@@ -302,11 +365,11 @@ function expandShortLink_(url) {
       if (!loc) break;
       current = resolveUrl(String(Array.isArray(loc) ? loc[0] : loc), current);
     }
-    // Threads share pages may not redirect; their page says where the post is.
-    if (isShortLink(current) && detectSource(current) === 'threads') {
+    // Threads/Instagram share pages may not redirect; their page says where the post is.
+    if (isShortLink(current) && !isTikTokShortLink(current)) {
       const html = fetchText_(current, UA_BOT);
       const canonical = html && canonicalFromHtml(html);
-      if (canonical && isThreadsPostUrl(canonical)) current = canonical;
+      if (canonical && !isShortLink(canonical) && detectSource(canonical) === detectSource(current)) current = canonical;
     }
   } catch (err) {
     /* keep what we have */
@@ -335,6 +398,22 @@ function fetchPreview_(url) {
     }
     return { url: url, author: authorFromUrl(url), text: null };
   }
+  if (source === 'youtube') {
+    // YouTube's public oEmbed endpoint: reliable, no login, gives title + channel.
+    const json = fetchText_('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(url), UA_BOT);
+    try {
+      const o = json ? JSON.parse(json) : null;
+      if (o) return { url: url, author: parseYouTubeAuthor(o), text: o.title || null };
+    } catch (err) {
+      /* fall through */
+    }
+    return { url: url, author: null, text: null };
+  }
+  if (source === 'instagram') {
+    // Best effort: Instagram sometimes shows Google's servers a login page instead.
+    const html = fetchText_(url, UA_BOT);
+    return Object.assign({ url: url }, html ? parseInstagramHtml(html) : { author: null, text: null });
+  }
   const html = fetchText_(url, UA_BOT);
   return { url: url, author: null, text: html ? metaTag(html, 'og:title') || metaTag(html, 'og:description') : null };
 }
@@ -360,11 +439,35 @@ function detectSource(url) {
   const host = hostOf(url);
   if (/(^|\.)threads\.(net|com)$/.test(host)) return 'threads';
   if (/(^|\.)tiktok\.com$/.test(host)) return 'tiktok';
+  if (/(^|\.)(instagram\.com|instagr\.am)$/.test(host)) return 'instagram';
+  if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/.test(host)) return 'youtube';
   return 'other';
 }
 
 function sourceLabel(source) {
-  return source === 'threads' ? 'Threads' : source === 'tiktok' ? 'TikTok' : 'Link';
+  return { threads: 'Threads', tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube' }[source] || 'Link';
+}
+
+function queryParam(url, name) {
+  const m = String(url).match(new RegExp('[?&]' + name + '=([^&#]+)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function parseYouTubeAuthor(o) {
+  const m = String(o.author_url || '').match(/\/@([^/?#]+)/);
+  return m ? m[1] : o.author_name || null;
+}
+
+/** Instagram post page → author + caption (from Open Graph tags). */
+function parseInstagramHtml(html) {
+  const title = metaTag(html, 'og:title') || '';
+  const desc = metaTag(html, 'og:description') || '';
+  if (!title || /log\s?in|sign up/i.test(title)) return { author: null, text: null };
+  // desc: '1,234 likes, 56 comments - weddingvendor on March 3, 2025: "Caption…".'
+  const a = desc.match(/-\s+([A-Za-z0-9._]+)\s+on\s+[A-Z][a-z]+ \d/) || title.match(/\(@([A-Za-z0-9._]+)\)/);
+  // title: 'Vendor Name on Instagram: "Caption…"'
+  const c = title.match(/on Instagram:\s*["“]([\s\S]*)["”]\s*$/) || desc.match(/:\s*["“]([\s\S]*)["”]\.?\s*$/);
+  return { author: a ? a[1] : null, text: c ? c[1].trim() || null : null };
 }
 
 function isTikTokShortLink(url) {
@@ -379,7 +482,9 @@ function isThreadsPostUrl(url) {
 /** Links that hide the real post: TikTok short links and Threads share links. */
 function isShortLink(url) {
   if (isTikTokShortLink(url)) return true;
-  return detectSource(url) === 'threads' && /^\/(share|t)\//.test(pathOf(url));
+  const source = detectSource(url);
+  if (source === 'instagram') return /^\/share\//.test(pathOf(url));
+  return source === 'threads' && /^\/(share|t)\//.test(pathOf(url));
 }
 
 function resolveUrl(loc, base) {
@@ -409,6 +514,23 @@ function normalizeUrl(url) {
     const m = path.match(/^\/(@[^/]*)\/(video|photo)\/(\d+)/);
     if (m) return 'https://www.tiktok.com/' + m[1] + '/' + m[2] + '/' + m[3];
     return 'https://' + hostOf(url) + path;
+  }
+  if (source === 'instagram') {
+    // /p/CODE, /reel/CODE, /reels/CODE, /tv/CODE, also /username/p/CODE → drop ?igsh= etc.
+    const m = path.match(/^\/(?:[^/]+\/)?(p|reels?|tv)\/([A-Za-z0-9_-]+)/);
+    if (m) return 'https://www.instagram.com/' + (m[1] === 'reels' ? 'reel' : m[1]) + '/' + m[2] + '/';
+    return 'https://www.instagram.com' + (path.replace(/\/?$/, '/'));
+  }
+  if (source === 'youtube') {
+    const host = hostOf(url);
+    let id = null;
+    let shorts = false;
+    if (/youtu\.be$/.test(host)) id = path.slice(1).split('/')[0];
+    else if (/^\/shorts\//.test(path)) { id = path.split('/')[2]; shorts = true; }
+    else if (/^\/(embed|live|v)\//.test(path)) id = path.split('/')[2];
+    else id = queryParam(url, 'v');
+    if (id) return shorts ? 'https://www.youtube.com/shorts/' + id : 'https://www.youtube.com/watch?v=' + id;
+    return 'https://www.youtube.com' + path;
   }
   return String(url).replace(/#.*$/, '');
 }
@@ -545,7 +667,7 @@ function buildPicker(paths, recent) {
     }
   });
 
-  const labels = [NEW_FOLDER];
+  const labels = [NEW_FOLDER, ADD_NOTE];
   const map = {};
   const add = function (label, path) {
     let l = label;
@@ -796,7 +918,20 @@ function setup() {
   saves.getRange('A:A').setNumberFormat('d mmm yyyy, h:mm');
   saves.getRange('D:D').setWrap(true);
   saves.getRange('G:G').setWrap(true);
-  [130, 70, 120, 360, 220, 200, 200, 80].forEach(function (w, i) { saves.setColumnWidth(i + 1, w); });
+  [130, 70, 120, 360, 220, 200, 200, 80, 110, 100, 90, 160].forEach(function (w, i) { saves.setColumnWidth(i + 1, w); });
+
+  // Planning columns: Status (dropdown), Rating (dropdown), Price, Contact.
+  const rows = saves.getMaxRows() - 1;
+  saves.getRange(2, COL.status, rows, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(STATUSES, true).setAllowInvalid(false).build(),
+  );
+  saves.getRange(2, COL.rating, rows, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(RATINGS, true).setAllowInvalid(false).build(),
+  );
+  saves.getRange(1, COL.status).setNote('To check → Shortlisted → Contacted → Booked. "Not for us" or "Archived" hides a post from Browse (unless you pick that status there).');
+  saves.getRange(1, COL.price).setNote('Anything you like, e.g. "RM 15,000" or "RM 45/pax".');
+  saves.getRange(1, COL.contact).setNote('Phone, WhatsApp or IG handle of the vendor.');
+  saves.getRange(2, COL.note, rows, 1).setWrap(true);
 
   // ── Folders ──
   const folders = getOrCreateSheet_(FOLDERS, 1);
@@ -832,16 +967,21 @@ function setup() {
 
   saves.hideColumns(COL.id); // internal ID, not useful to look at
 
+  const removed = cleanUpJunkFolders_();
+
   // ── Browse (phone-friendly) ──
   //  📁 Folder  [ Weddings / Venue ▾ ]   12 posts
   //  🔎 Search  [                    ]   📥 3 unsorted in Inbox
-  //  Saved | 🧵 | Who | Post | Link (Open ↗) | Folders | Note
+  //  🏷️ Status  [ Any (not archived) ▾ ] [ Newest first ▾ ]
+  //  Saved | 🧵 | Who | Post | Link | Status | ⭐ | Price | Folders | Note | Contact
   const browse = getOrCreateSheet_(BROWSE, 0);
-  // Keep the folder you were looking at (older layouts kept it in B1).
+  // Keep what you were looking at (the first layout kept the folder in B1).
   const oldLayout = String(browse.getRange('A1').getValue()) === 'Folder';
   const current = String(browse.getRange(oldLayout ? 'B1' : 'D1').getValue() || 'Inbox');
   const search = String(browse.getRange(oldLayout ? 'B2' : 'D2').getValue() || '');
-  const top = browse.getRange('A1:G3');
+  const status = oldLayout ? '' : String(browse.getRange('D3').getValue() || '');
+  const sort = oldLayout ? '' : String(browse.getRange('E3').getValue() || '');
+  const top = browse.getRange('A1:K3');
   top.breakApart();
   top.clearContent();
   top.clearDataValidations();
@@ -849,8 +989,11 @@ function setup() {
 
   browse.getRange('A1:C1').merge().setValue('📁 Folder').setFontWeight('bold');
   browse.getRange('A2:C2').merge().setValue('🔎 Search').setFontWeight('bold');
+  browse.getRange('A3:C3').merge().setValue('🏷️ Status').setFontWeight('bold');
   browse.getRange('D1').setValue(current).setBackground('#fff8d6');
   browse.getRange('D2').setValue(search).setBackground('#fff8d6');
+  browse.getRange('D3').setValue(STATUSES.indexOf(status) !== -1 ? status : ANY_STATUS).setBackground('#fff8d6');
+  browse.getRange('E3:G3').merge().setValue(SORTS.indexOf(sort) !== -1 ? sort : SORTS[0]).setBackground('#fff8d6');
   browse.getRange('E1:G1').merge().setFormula('=IF($A$5="Nothing here yet", "0 posts", COUNTA($A$5:$A) & " posts")').setFontColor('#666666');
   browse.getRange('E2:G2').merge()
     .setFormula('="📥 " & COUNTIFS(Saves!E2:E, "<>", Saves!F2:F, "") & " unsorted in Inbox"')
@@ -861,17 +1004,23 @@ function setup() {
   browse.getRange('D1').setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInRange(browse.getRange('Z1:Z'), true).setAllowInvalid(false).build(),
   );
+  browse.getRange('D3').setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList([ANY_STATUS].concat(STATUSES), true).setAllowInvalid(false).build(),
+  );
+  browse.getRange('E3').setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(SORTS, true).setAllowInvalid(false).build(),
+  );
 
-  browse.getRange(4, 1, 1, 7)
-    .setValues([['Saved', '', 'Who', 'Post', 'Link', 'Folders', 'Note']])
+  browse.getRange(4, 1, 1, 11)
+    .setValues([['Saved', '', 'Who', 'Post', 'Link', 'Status', '⭐', 'Price', 'Folders', 'Note', 'Contact']])
     .setFontWeight('bold').setBackground('#111111').setFontColor('#ffffff');
   browse.getRange('A5').setFormula(BROWSE_FORMULA);
   browse.getRange('A5:A').setNumberFormat('d mmm');
-  browse.getRange('A5:G').setVerticalAlignment('top');
+  browse.getRange('A5:K').setVerticalAlignment('top');
   browse.getRange('D5:D').setWrap(true);
-  browse.getRange('F5:G').setWrap(true);
+  browse.getRange('I5:K').setWrap(true);
   browse.setFrozenRows(4);
-  [62, 30, 105, 240, 62, 150, 150].forEach(function (w, i) { browse.setColumnWidth(i + 1, w); });
+  [62, 30, 105, 240, 62, 95, 75, 85, 150, 150, 120].forEach(function (w, i) { browse.setColumnWidth(i + 1, w); });
 
   // Remove the default empty "Sheet1".
   const blank = ss.getSheetByName('Sheet1');
@@ -882,25 +1031,38 @@ function setup() {
   // No popup here: a popup in the sheet tab blocks the run (and times out) if nobody clicks OK.
   console.log(shortcutDetails_());
   try {
-    ss.toast('Setup complete. Use Saves → Show Shortcut token to see your token.', 'Saves', 8);
+    ss.toast(
+      'Setup complete.' + (removed.length ? ' Removed junk folders: ' + removed.join(', ') + '.' : '') +
+        ' Use Saves → Show Shortcut token to see your token.',
+      'Saves',
+      10,
+    );
+    if (removed.length) console.log('Removed junk folders: ' + removed.join(', '));
   } catch (err) {
     /* no sheet open */
   }
 }
 
-// Newest first; a 🧵/🎵 icon instead of a Source column; a short "Open ↗" link instead of the URL.
+// Filters by folder (D1), search (D2) and status (D3); sorts by E3. Empty status counts as "To check".
+// Shows a 🧵/🎵/📸/▶️ icon instead of a Source column, and "Open ↗" instead of the long URL.
 const BROWSE_FORMULA =
-  '=IFERROR(LET(rows, SORT(FILTER(Saves!A2:G, Saves!E2:E<>"",' +
-  ' IF($D$1="Inbox", Saves!F2:F="",' +
-  '  IF(OR($D$1="", $D$1="All saves"), Saves!E2:E<>"",' +
-  '   (ISNUMBER(FIND(", "&$D$1&",", ", "&Saves!F2:F&",")) + ISNUMBER(FIND(", "&$D$1&" / ", ", "&Saves!F2:F))) > 0)),' +
-  ' IF($D$2="", Saves!E2:E<>"", ISNUMBER(SEARCH($D$2, Saves!C2:C&" "&Saves!D2:D&" "&Saves!F2:F&" "&Saves!G2:G)))' +
-  '), 1, FALSE),' +
-  ' HSTACK(INDEX(rows,,1),' +
-  '  MAP(INDEX(rows,,2), LAMBDA(s, IF(s="TikTok", "🎵", IF(s="Threads", "🧵", "🔗")))),' +
-  '  INDEX(rows,,3), INDEX(rows,,4),' +
-  '  MAP(INDEX(rows,,5), LAMBDA(u, HYPERLINK(u, "Open ↗"))),' +
-  '  INDEX(rows,,6), INDEX(rows,,7))),' +
+  '=IFERROR(LET(' +
+  ' st, ARRAYFORMULA(IF(Saves!I2:I="", "To check", Saves!I2:I)),' +
+  ' f, FILTER(Saves!A2:L, Saves!E2:E<>"",' +
+  '  IF($D$1="Inbox", Saves!F2:F="",' +
+  '   IF(OR($D$1="", $D$1="All saves"), Saves!E2:E<>"",' +
+  '    (ISNUMBER(FIND(", "&$D$1&",", ", "&Saves!F2:F&",")) + ISNUMBER(FIND(", "&$D$1&" / ", ", "&Saves!F2:F))) > 0)),' +
+  '  IF($D$2="", Saves!E2:E<>"",' +
+  '   ISNUMBER(SEARCH($D$2, Saves!C2:C&" "&Saves!D2:D&" "&Saves!F2:F&" "&Saves!G2:G&" "&Saves!K2:K&" "&Saves!L2:L))),' +
+  '  IF(OR($D$3="", $D$3="' + ANY_STATUS + '"), (st<>"Archived")*(st<>"Not for us"), st=$D$3)),' +
+  ' key, IF($E$3="Top rated", MAP(INDEX(f,,10), LAMBDA(r, LEN(r))), INDEX(f,,1)),' +
+  ' s, SORT(f, key, $E$3="Oldest first", INDEX(f,,1), FALSE),' +
+  ' HSTACK(INDEX(s,,1),' +
+  '  MAP(INDEX(s,,2), LAMBDA(x, IF(x="TikTok", "🎵", IF(x="Threads", "🧵", IF(x="Instagram", "📸", IF(x="YouTube", "▶️", "🔗")))))),' +
+  '  INDEX(s,,3), INDEX(s,,4),' +
+  '  MAP(INDEX(s,,5), LAMBDA(u, HYPERLINK(u, "Open ↗"))),' +
+  '  MAP(INDEX(s,,9), LAMBDA(v, IF(v="", "To check", v))),' +
+  '  INDEX(s,,10), INDEX(s,,11), INDEX(s,,6), INDEX(s,,7), INDEX(s,,12))),' +
   ' "Nothing here yet")';
 
 function newToken_() {

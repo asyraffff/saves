@@ -1,10 +1,10 @@
 # "Save to Saves" iPhone Shortcut
 
-This Shortcut puts **Saves** in the share sheet of Threads, TikTok, Safari and other apps.
+This Shortcut puts **Saves** in the share sheet of Threads, TikTok, Instagram, YouTube, Safari and other apps.
 
 **What it does when you share a post:**
 1. Adds a row to your sheet right away (in the **Inbox**).
-2. Shows your folders. Tick as many as you like, or pick **➕ New folder…**.
+2. Shows your folders. Tick as many as you like, pick **➕ New folder…**, or tick **📝 Add note…** to type a note (price, date, contact).
 3. Files the post, fills in the author and text, and shows "Saved to Recipes, Ideas".
 
 If you cancel the folder list, the post stays in the Inbox, and you can file it later in the sheet.
@@ -52,18 +52,31 @@ Add these actions in order. Use the search bar at the bottom to find each one.
     - Still inside, add **Set Variable**: `NewFolder` = **Provided Input**
     - Leave **Otherwise** empty. **End If** is added automatically.
 
-### E. File the post
-13. **Get Dictionary Value**: Get **Value** for key `id` in **Saved**
-14. **Get Contents of URL**
+### E. Optional note
+13. **Text**: leave it empty
+14. **Set Variable**: name `Note`, input **Text** (the one from step 13)
+15. **If**: input **Chosen**, condition **contains**, text `Add note`
+    - Inside the If, add **Ask for Input**: type **Text**, prompt `Note (e.g. RM15k, free on 12 Dec)`
+    - Still inside, add **Set Variable**: `Note` = **Provided Input**
+    - Leave **Otherwise** empty.
+
+> Wherever a field says **Chosen**, **NewFolder**, **Note** or **Dictionary Value**, it must be the blue variable bubble. Long-press the field → **Select Variable**, then tap the variable. Typing the word as plain text makes it a folder name. If that ever happens, running `setup` again cleans those folders up.
+
+### F. File the post
+16. **Get Dictionary Value**: Get **Value** for key `id` in **Saved**
+17. **Get Contents of URL**
     - URL: your **URL** (same as step 4)
-    - Method **POST**, Request Body **JSON**, five **Text** fields:
+    - Method **POST**, Request Body **JSON**, six **Text** fields:
       - `action` = `assign`
       - `token` = your **TOKEN**
-      - `id` = **Dictionary Value** (the one from step 13)
+      - `id` = **Dictionary Value** (the one from step 16)
       - `folders` = **Chosen**
       - `new_folder` = **NewFolder**
-15. **Get Dictionary Value**: Get **Value** for key `message` in **Contents of URL**
-16. **Show Notification**: **Dictionary Value**
+      - `note` = **Note**
+18. **Get Dictionary Value**: Get **Value** for key `message` in **Contents of URL**
+19. **Show Notification**: **Dictionary Value**
+
+**Already built the Shortcut?** Just add steps 13–15 after the New folder **End If**, and add the `note` field to step 17.
 
 Tap **Done**.
 

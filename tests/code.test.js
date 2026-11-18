@@ -44,11 +44,11 @@ beforeEach(() => {
 describe('setup', () => {
   it('creates the three tabs, starter folders, a token and the Browse formula', () => {
     expect([...env.sheets.keys()].sort()).toEqual(['Browse', 'Folders', 'Saves']);
-    expect(env.sheets.get('Saves').dump()[0]).toEqual(['Saved', 'Source', 'Author', 'Text', 'Link', 'Folders', 'Note', 'ID']);
+    expect(env.sheets.get('Saves').dump()[0]).toEqual(['Saved', 'Source', 'Author', 'Text', 'Link', 'Folders', 'Note', 'ID', 'Status', 'Rating', 'Price', 'Contact']);
     expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas', 'Recipes']);
     expect(token).toMatch(/^svs_[0-9a-f]{40}$/);
     const browse = env.sheets.get('Browse').formulas['5,1'];
-    expect(browse).toContain('FILTER(Saves!A2:G');
+    expect(browse).toContain('FILTER(Saves!A2:L');
     expect(browse).toContain('HYPERLINK(u, "Open ↗")');
     expect(browse).not.toContain('$B$1');
   });
@@ -72,7 +72,7 @@ describe('Shortcut flow', () => {
   it('saves a Threads post to the Inbox, then files it into several folders and fills details', () => {
     const saved = post({ action: 'save', input: 'https://www.threads.net/@zuck/post/CuP48CiS5sx?xmt=AQG' });
     expect(saved.prompt).toBe('Save @zuck to:');
-    expect(saved.folders).toEqual(['➕ New folder…', '⭐ Favourites', 'Ideas', 'Recipes']);
+    expect(saved.folders).toEqual(['➕ New folder…', '📝 Add note…', '⭐ Favourites', 'Ideas', 'Recipes']);
     let [row] = savesRows();
     expect(row.slice(1, 6)).toEqual(['Threads', '@zuck', '', 'https://www.threads.com/@zuck/post/CuP48CiS5sx', '']);
 
@@ -133,7 +133,7 @@ describe('Shortcut flow', () => {
     const s0 = post({ action: 'save', input: 'https://www.threads.com/@a/post/W1' });
     post({ action: 'assign', id: s0.id, folders: '', new_folder: 'Weddings / Venue' });
     const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/W2' });
-    expect(s.folders).toEqual(['➕ New folder…', '⭐ Favourites', 'Ideas', 'Recipes', 'Weddings', '↳ Venue']);
+    expect(s.folders).toEqual(['➕ New folder…', '📝 Add note…', '⭐ Favourites', 'Ideas', 'Recipes', 'Weddings', '↳ Venue']);
     const res = post({ action: 'assign', id: s.id, folders: 'Weddings\n↳ Venue' });
     expect(res.message).toBe('Saved to Weddings, Weddings / Venue');
     expect(savesRows()[1][5]).toBe('Weddings, Weddings / Venue');
@@ -202,6 +202,7 @@ describe('folder management', () => {
     // Few folders → no "recent" section; children indented under their parent; orphan shows full path.
     expect(labels).toEqual([
       '➕ New folder…',
+      '📝 Add note…',
       'Weddings',
       '↳ Venue',
       '↳ Catering',
@@ -221,7 +222,7 @@ describe('folder management', () => {
     // Many folders → up to 5 recent ones on top.
     const many = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'Weddings', 'Weddings / Venue'];
     const r = gas.buildPicker(many, ['Weddings / Venue', 'Gone', 'C']);
-    expect(r.labels.slice(0, 3)).toEqual(['➕ New folder…', '🕘 Weddings / Venue', '🕘 C']);
+    expect(r.labels.slice(0, 4)).toEqual(['➕ New folder…', '📝 Add note…', '🕘 Weddings / Venue', '🕘 C']);
     expect(r.map['🕘 C']).toBe('C');
   });
 
@@ -230,5 +231,81 @@ describe('folder management', () => {
     expect(gas.removeFromCell('A, A / B, AB', 'A')).toBe('AB');
     expect(gas.cleanFolderName(' Recipes /Desserts, cakes › Choc ')).toBe('Recipes / Desserts cakes / Choc');
     expect(gas.splitFolders('a, b,, A')).toEqual(['a', 'b']);
+  });
+});
+
+describe('Instagram & YouTube', () => {
+  it('normalises links', () => {
+    expect(gas.normalizeUrl('https://www.instagram.com/reel/C5vUrq3SN1p/?igsh=abc')).toBe('https://www.instagram.com/reel/C5vUrq3SN1p/');
+    expect(gas.normalizeUrl('https://instagram.com/reels/C5vUrq3SN1p')).toBe('https://www.instagram.com/reel/C5vUrq3SN1p/');
+    expect(gas.normalizeUrl('https://www.instagram.com/someshop/p/C0tBnJ6Sv5O/?img_index=2')).toBe('https://www.instagram.com/p/C0tBnJ6Sv5O/');
+    expect(gas.normalizeUrl('https://youtu.be/dQw4w9WgXcQ?si=xyz')).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(gas.normalizeUrl('https://m.youtube.com/watch?feature=share&v=dQw4w9WgXcQ&t=10')).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(gas.normalizeUrl('https://youtube.com/shorts/tPEE9ZwTmy0?si=a')).toBe('https://www.youtube.com/shorts/tPEE9ZwTmy0');
+    expect(gas.sourceLabel(gas.detectSource('https://instagr.am/p/x'))).toBe('Instagram');
+    expect(gas.isShortLink('https://www.instagram.com/share/reel/BAabc')).toBe(true);
+  });
+
+  it('parses Instagram post pages and ignores the login page', () => {
+    const html = `<meta property="og:title" content="Pelamin Indah on Instagram: &quot;Pelamin set for Dec 2025 &#x1f338;&quot;" />
+<meta property="og:description" content="1,234 likes, 56 comments - pelamin.indah on March 3, 2025: &quot;Pelamin set for Dec 2025 &#x1f338;&quot;." />`;
+    expect(gas.parseInstagramHtml(html)).toEqual({ author: 'pelamin.indah', text: 'Pelamin set for Dec 2025 🌸' });
+    expect(gas.parseInstagramHtml('<meta property="og:title" content="Login • Instagram" />')).toEqual({ author: null, text: null });
+  });
+
+  it('saves a YouTube link with title and channel from oEmbed', () => {
+    env = loadScript({
+      fetch: (url) =>
+        url.startsWith('https://www.youtube.com/oembed')
+          ? { body: JSON.stringify({ title: 'Wedding vlog', author_name: 'Aina', author_url: 'https://www.youtube.com/@ainavlogs' }) }
+          : { code: 404 },
+    });
+    gas = env.gas;
+    gas.setup();
+    token = env.props.get('TOKEN');
+    const s = post({ action: 'save', input: 'https://youtu.be/abc123XYZ00?si=1' });
+    post({ action: 'assign', id: s.id, folders: 'Ideas' });
+    gas.fillDetailsInBackground();
+    const [row] = savesRows();
+    expect(row.slice(1, 5)).toEqual(['YouTube', '@ainavlogs', 'Wedding vlog', 'https://www.youtube.com/watch?v=abc123XYZ00']);
+  });
+});
+
+describe('wedding planning & clean-up', () => {
+  it('new saves start as "To check"', () => {
+    post({ action: 'save', input: 'https://www.threads.com/@a/post/S1' });
+    expect(savesRows()[0][8]).toBe('To check');
+  });
+
+  it('📝 Add note… adds the typed note and is never a folder', () => {
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/N1' });
+    expect(s.folders[1]).toBe('📝 Add note…');
+    const res = post({ action: 'assign', id: s.id, folders: '📝 Add note…\nIdeas', note: 'RM15k, ask about Dec date' });
+    expect(res.message).toBe('Saved to Ideas · 📝 note added');
+    const [row] = savesRows();
+    expect(row[5]).toBe('Ideas');
+    expect(row[6]).toBe('RM15k, ask about Dec date');
+  });
+
+  it('variable names sent as plain text never become folders', () => {
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/J1' });
+    const res = post({ action: 'assign', id: s.id, folders: 'Chosen\nChoosen Item\nIdeas', new_folder: 'NewFolder', note: 'Note' });
+    expect(res.message).toBe('Saved to Ideas');
+    expect(folderNames()).not.toContain('Chosen');
+    expect(folderNames()).not.toContain('NewFolder');
+    expect(savesRows()[0][6]).toBe('');
+  });
+
+  it('setup removes junk folders left from earlier Shortcut mistakes', () => {
+    env.sheets.get('Folders').appendRow(['Chosen']);
+    env.sheets.get('Folders').appendRow(['Choosen Item']);
+    env.sheets.get('Folders').appendRow(['Inbox']);
+    env.sheets.get('Folders').appendRow(['NewFolder']);
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/C1' });
+    env.sheets.get('Saves').getRange(2, 6).setValue('Chosen, Ideas, NewFolder, Choosen Item');
+    gas.setup();
+    expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas', 'Recipes']);
+    expect(savesRows()[0][5]).toBe('Ideas');
+    expect(s.id).toBeTruthy();
   });
 });

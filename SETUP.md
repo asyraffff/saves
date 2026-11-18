@@ -16,7 +16,7 @@ All you need is your Google account. Do steps 1–5 on a **computer**, because A
 1. In the toolbar, pick **`setup`** from the function dropdown, then click **▶ Run**.
 2. Google asks for permission. Click **Review permissions** and choose your account.
 3. You'll see **"Google hasn't verified this app"**. That's expected, because it's your own script. Click **Advanced**, then **Go to Saves (unsafe)**, then **Allow**.
-   It asks to see and edit this spreadsheet, and to fetch post details from Threads and TikTok.
+   It asks to see and edit this spreadsheet, and to fetch post details from Threads, TikTok, Instagram and YouTube.
 4. The **Execution log** at the bottom shows your **Shortcut token** (`svs_…`). You can see it again any time later.
 
 Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Folders**.
@@ -49,19 +49,31 @@ Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Fo
 
 **Browse tab:** your main view, sized for the phone.
 - Tap the yellow **📁 Folder** cell and pick a folder, **All saves**, or **Inbox** (posts not in any folder yet). Picking `Weddings` also shows posts in `Weddings / Venue`.
-- Type in the yellow **🔎 Search** cell to search text, authors, folders and notes.
+- Type in the yellow **🔎 Search** cell to search text, authors, folders, notes, prices and contacts.
+- **🏷️ Status** picks which posts show. **All active** hides *Not for us* and *Archived*; pick one of those to see them again.
+- The sort cell next to Status offers **Newest first**, **Oldest first** or **Top rated**.
 - Next to these you'll see how many posts are shown, and how many are still unsorted in the Inbox.
-- Each post shows 🧵 (Threads) or 🎵 (TikTok). Tap **Open ↗** to open it in the app.
+- Each post shows 🧵 Threads, 🎵 TikTok, 📸 Instagram, ▶️ YouTube or 🔗 another link. Tap **Open ↗** to open it in the app.
 
 **Saving from the share sheet:**
+- Works from Threads, TikTok, Instagram, YouTube, and any other link.
 - Subfolders appear indented under their parent (`Weddings`, then `↳ Venue`).
 - Once you have more than 8 folders, your 5 most recently used ones appear at the top, marked 🕘.
-- You get the "Saved to …" notification right away. The author and text fill in a few seconds later.
+- Tick **📝 Add note…** as well as your folders to type a quick note, e.g. `RM15k, free on 12 Dec`.
+- You get the "Saved to …" notification right away. The author and text fill in a few seconds later. Instagram often hides details from Google's servers, so an Instagram post may save with only its link and author. Add a Note if you need the context.
 
-**Saves tab:** every post, one per row.
+**Saves tab:** every post, one per row. For planning (e.g. weddings), each post also has:
+
+| Column | Use it for |
+|---|---|
+| **Status** | `To check` (new saves), `Shortlisted`, `Contacted`, `Booked`, `Not for us`, `Archived` |
+| **Rating** | ⭐ to ⭐⭐⭐⭐⭐ |
+| **Price** | Any text, e.g. `RM 15,000` or `RM 45/pax` |
+| **Contact** | Phone, WhatsApp or IG handle |
+
 - To change a post's folders, tap its **Folders** cell and tick the folders, or type `Ideas, Recipes / Desserts`.
 - Add your own **Note**.
-- To delete a post, delete its row.
+- To hide a post without deleting it, set its Status to **Archived**. To delete a post, delete its row.
 
 **Folders tab:** your folders, one per row. These changes work on the iPhone too:
 
@@ -79,7 +91,7 @@ On a computer, the **Saves** menu also has *Rename or move folder…*, *Delete f
 
 ## Updating the script later
 1. Paste the new code into Apps Script and save.
-2. Pick **`setup`** in the function dropdown and click **▶ Run**. This applies layout changes and asks for any new permission. Your folders, posts and token are kept.
+2. Pick **`setup`** in the function dropdown and click **▶ Run**. This applies layout changes, adds any new columns, removes junk folders (like `Chosen` or `NewFolder` from Shortcut mix-ups), and asks for any new permission. Your folders, posts and token are kept.
 3. Go to **Deploy → Manage deployments**, click the ✏️ pencil, set **Version: New version**, then click **Deploy**.
 
 Your Web app URL stays the same, so the Shortcut keeps working.
