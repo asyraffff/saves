@@ -9,7 +9,7 @@ Share a post from Threads, TikTok, Instagram or YouTube on your iPhone, tick one
 - **Inbox** for anything not filed yet
 - **Browse tab:** pick a folder, search, filter by status and sort, and the matching posts appear
 - **Planning columns:** Status (To check → Shortlisted → Contacted → Booked, Not for us, Archived), Rating, Price and Contact, made for comparing wedding vendors
-- **Quick note while saving** with 📝 Add note…
+- **Quick note, status, rating and price while saving** (📝 Add note…, 🏷️ Status, rating & price…)
 - **Folder management that works on the phone:** rename a folder cell to rename it everywhere, clear it to remove it, drag rows to reorder
 - **Post details:** author and text or caption, fetched automatically (Instagram is best effort)
 - Syncs everywhere your Google account does
@@ -33,7 +33,7 @@ iPhone share sheet ──► Shortcut ──► Apps Script web app (apps-script
 `POST <Web app URL>` with a JSON body. Every call needs `"token"`.
 
 - `{"action":"save","input":"<shared text or URL>"}` saves the post to the Inbox and returns `{id, prompt, folders:["➕ New folder…", …], in_folders}`.
-- `{"action":"assign","id":"…","folders":"A\nB","new_folder":"Parent / Child","note":"…"}` adds those folders and returns `{message}`.
+- `{"action":"assign","id":"…","folders":"A\nB","new_folder":"Parent / Child","note":"…","status":"Shortlisted","rating":"⭐⭐⭐⭐","price":"RM 15,000"}` adds those folders and returns `{message}`.
 - `{"action":"folders"}` returns `{folders}`.
 
 On an error, the response has `error: true`, and the message is also placed in `folders`, so it shows up in the Shortcut's list.

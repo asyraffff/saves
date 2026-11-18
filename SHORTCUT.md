@@ -4,7 +4,7 @@ This Shortcut puts **Saves** in the share sheet of Threads, TikTok, Instagram, Y
 
 **What it does when you share a post:**
 1. Adds a row to your sheet right away (in the **Inbox**).
-2. Shows your folders. Tick as many as you like, pick **➕ New folder…**, or tick **📝 Add note…** to type a note (price, date, contact).
+2. Shows your folders. Tick as many as you like, pick **➕ New folder…**, tick **📝 Add note…** to type a note, or tick **🏷️ Status, rating & price…** to set those straight away.
 3. Files the post, fills in the author and text, and shows "Saved to Recipes, Ideas".
 
 If you cancel the folder list, the post stays in the Inbox, and you can file it later in the sheet.
@@ -60,23 +60,45 @@ Add these actions in order. Use the search bar at the bottom to find each one.
     - Still inside, add **Set Variable**: `Note` = **Provided Input**
     - Leave **Otherwise** empty.
 
-> Wherever a field says **Chosen**, **NewFolder**, **Note** or **Dictionary Value**, it must be the blue variable bubble. Long-press the field → **Select Variable**, then tap the variable. Typing the word as plain text makes it a folder name. If that ever happens, running `setup` again cleans those folders up.
+### F. Optional status, rating and price
+16. **Set Variable**: name `Status`, input **Text** (the empty one from step 13)
+17. **Set Variable**: name `Rating`, input **Text** (the same one)
+18. **Set Variable**: name `Price`, input **Text** (the same one)
+19. **If**: input **Chosen**, condition **contains**, text `Status, rating`. Inside the If, add:
+    - **Get Dictionary Value**: Get **Value** for key `statuses` in **Saved**
+    - **Choose from List**: list **Dictionary Value**, Prompt `Status` (leave Select Multiple **off**)
+    - **Set Variable**: `Status` = **Chosen Item**
+    - **Get Dictionary Value**: Get **Value** for key `ratings` in **Saved**
+    - **Choose from List**: list **Dictionary Value**, Prompt `Rating`
+    - **Set Variable**: `Rating` = **Chosen Item**
+    - **Ask for Input**: type **Text**, prompt `Price (e.g. RM 15,000), or leave empty`
+    - **Set Variable**: `Price` = **Provided Input**
+    - Leave **Otherwise** empty.
 
-### F. File the post
-16. **Get Dictionary Value**: Get **Value** for key `id` in **Saved**
-17. **Get Contents of URL**
+Each list starts with **— Skip**, so you can set just the rating, say, and skip the rest. Don't tap Cancel there: Cancel stops the whole Shortcut, and the post stays in the Inbox.
+
+> Wherever a field says **Chosen**, **NewFolder**, **Note**, **Status**, **Rating**, **Price** or **Dictionary Value**, it must be the blue variable bubble. Long-press the field → **Select Variable**, then tap the variable. Typing the word as plain text makes it a folder name. If that ever happens, running `setup` again cleans those folders up.
+
+### G. File the post
+20. **Get Dictionary Value**: Get **Value** for key `id` in **Saved**
+21. **Get Contents of URL**
     - URL: your **URL** (same as step 4)
-    - Method **POST**, Request Body **JSON**, six **Text** fields:
+    - Method **POST**, Request Body **JSON**, nine **Text** fields:
       - `action` = `assign`
       - `token` = your **TOKEN**
-      - `id` = **Dictionary Value** (the one from step 16)
+      - `id` = **Dictionary Value** (the one from step 20)
       - `folders` = **Chosen**
       - `new_folder` = **NewFolder**
       - `note` = **Note**
-18. **Get Dictionary Value**: Get **Value** for key `message` in **Contents of URL**
-19. **Show Notification**: **Dictionary Value**
+      - `status` = **Status**
+      - `rating` = **Rating**
+      - `price` = **Price**
+22. **Get Dictionary Value**: Get **Value** for key `message` in **Contents of URL**
+23. **Show Notification**: **Dictionary Value**
 
-**Already built the Shortcut?** Just add steps 13–15 after the New folder **End If**, and add the `note` field to step 17.
+**Already built the Shortcut?** Add steps 16–19 right after the note's **End If**, then add the `status`, `rating` and `price` fields to your assign **Get Contents of URL**.
+
+**Why can't I type a new folder name in the list itself?** iOS's **Choose from List** popup has no text box, so **➕ New folder…** opens a second prompt to type the name. Tip: type `Weddings / Catering` there to create a subfolder.
 
 Tap **Done**.
 

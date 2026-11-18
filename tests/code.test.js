@@ -72,7 +72,7 @@ describe('Shortcut flow', () => {
   it('saves a Threads post to the Inbox, then files it into several folders and fills details', () => {
     const saved = post({ action: 'save', input: 'https://www.threads.net/@zuck/post/CuP48CiS5sx?xmt=AQG' });
     expect(saved.prompt).toBe('Save @zuck to:');
-    expect(saved.folders).toEqual(['➕ New folder…', '📝 Add note…', '⭐ Favourites', 'Ideas', 'Recipes']);
+    expect(saved.folders).toEqual(['➕ New folder…', '📝 Add note…', '🏷️ Status, rating & price…', '⭐ Favourites', 'Ideas', 'Recipes']);
     let [row] = savesRows();
     expect(row.slice(1, 6)).toEqual(['Threads', '@zuck', '', 'https://www.threads.com/@zuck/post/CuP48CiS5sx', '']);
 
@@ -133,7 +133,7 @@ describe('Shortcut flow', () => {
     const s0 = post({ action: 'save', input: 'https://www.threads.com/@a/post/W1' });
     post({ action: 'assign', id: s0.id, folders: '', new_folder: 'Weddings / Venue' });
     const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/W2' });
-    expect(s.folders).toEqual(['➕ New folder…', '📝 Add note…', '⭐ Favourites', 'Ideas', 'Recipes', 'Weddings', '↳ Venue']);
+    expect(s.folders).toEqual(['➕ New folder…', '📝 Add note…', '🏷️ Status, rating & price…', '⭐ Favourites', 'Ideas', 'Recipes', 'Weddings', '↳ Venue']);
     const res = post({ action: 'assign', id: s.id, folders: 'Weddings\n↳ Venue' });
     expect(res.message).toBe('Saved to Weddings, Weddings / Venue');
     expect(savesRows()[1][5]).toBe('Weddings, Weddings / Venue');
@@ -202,7 +202,7 @@ describe('folder management', () => {
     // Few folders → no "recent" section; children indented under their parent; orphan shows full path.
     expect(labels).toEqual([
       '➕ New folder…',
-      '📝 Add note…',
+      '📝 Add note…', '🏷️ Status, rating & price…',
       'Weddings',
       '↳ Venue',
       '↳ Catering',
@@ -222,7 +222,7 @@ describe('folder management', () => {
     // Many folders → up to 5 recent ones on top.
     const many = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'Weddings', 'Weddings / Venue'];
     const r = gas.buildPicker(many, ['Weddings / Venue', 'Gone', 'C']);
-    expect(r.labels.slice(0, 4)).toEqual(['➕ New folder…', '📝 Add note…', '🕘 Weddings / Venue', '🕘 C']);
+    expect(r.labels.slice(0, 5)).toEqual(['➕ New folder…', '📝 Add note…', '🏷️ Status, rating & price…', '🕘 Weddings / Venue', '🕘 C']);
     expect(r.map['🕘 C']).toBe('C');
   });
 
@@ -307,5 +307,38 @@ describe('wedding planning & clean-up', () => {
     expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas', 'Recipes']);
     expect(savesRows()[0][5]).toBe('Ideas');
     expect(s.id).toBeTruthy();
+  });
+});
+
+describe('status, rating & price from the Shortcut', () => {
+  it('save returns the lists and assign fills the columns', () => {
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/P1' });
+    expect(s.folders.slice(0, 3)).toEqual(['➕ New folder…', '📝 Add note…', '🏷️ Status, rating & price…']);
+    expect(s.statuses[0]).toBe('— Skip');
+    expect(s.statuses).toContain('Shortlisted');
+    expect(s.ratings).toEqual(['— Skip', '⭐', '⭐⭐', '⭐⭐⭐', '⭐⭐⭐⭐', '⭐⭐⭐⭐⭐']);
+    const res = post({
+      action: 'assign', id: s.id, folders: '🏷️ Status, rating & price…\nIdeas',
+      status: 'Shortlisted', rating: '⭐⭐⭐⭐', price: 'RM 15,000',
+    });
+    expect(res.message).toBe('Saved to Ideas · Shortlisted · ⭐⭐⭐⭐ · RM 15,000');
+    const [row] = savesRows();
+    expect(row.slice(8, 11)).toEqual(['Shortlisted', '⭐⭐⭐⭐', 'RM 15,000']);
+    expect(folderNames()).not.toContain('🏷️ Status, rating & price…');
+  });
+
+  it('skipped or unset fields change nothing', () => {
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/P2' });
+    const res = post({ action: 'assign', id: s.id, folders: 'Ideas', status: '— Skip', rating: 'Rating', price: 'Price' });
+    expect(res.message).toBe('Saved to Ideas');
+    expect(savesRows()[0].slice(8, 11)).toEqual(['To check', '', '']);
+  });
+
+  it('understands loose ratings and statuses', () => {
+    expect(gas.toRating('3')).toBe('⭐⭐⭐');
+    expect(gas.toRating('5 stars')).toBe('⭐⭐⭐⭐⭐');
+    expect(gas.toRating('9')).toBe(null);
+    expect(gas.toStatus('booked')).toBe('Booked');
+    expect(gas.toStatus('maybe')).toBe(null);
   });
 });

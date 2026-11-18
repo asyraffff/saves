@@ -13,6 +13,8 @@ const FOLDERS = 'Folders';
 const BROWSE = 'Browse';
 const NEW_FOLDER = '➕ New folder…';
 const ADD_NOTE = '📝 Add note…';
+const ADD_DETAILS = '🏷️ Status, rating & price…';
+const SKIP = '— Skip';
 // Planning columns were added after ID (column H) so existing sheets keep working.
 const HEADERS = ['Saved', 'Source', 'Author', 'Text', 'Link', 'Folders', 'Note', 'ID', 'Status', 'Rating', 'Price', 'Contact'];
 const COL = { saved: 1, source: 2, author: 3, text: 4, link: 5, folders: 6, note: 7, id: 8, status: 9, rating: 10, price: 11, contact: 12 };
@@ -28,6 +30,27 @@ const NOT_FOLDERS = [
   'inbox', 'all saves', 'chosen', 'choosen', 'chosen item', 'choosen item', 'newfolder', 'new folder',
   'note', 'add note', 'provided input', 'dictionary value', 'combined text', 'shortcut input', 'text', 'saved',
 ];
+
+/** True for values a Shortcut sends when a field was skipped, or set to a variable's name. */
+function isBlankValue(v) {
+  const n = String(v == null ? '' : v).replace(/[—–-]/g, '').trim().toLowerCase();
+  return !n || isNotFolder(n) || ['skip', 'none', 'price', 'status', 'rating', 'chosen item'].indexOf(n) !== -1;
+}
+
+/** "shortlisted" → "Shortlisted"; anything else → null. */
+function toStatus(v) {
+  const n = String(v || '').trim().toLowerCase();
+  const hit = STATUSES.filter(function (st) { return st.toLowerCase() === n; })[0];
+  return hit || null;
+}
+
+/** "⭐⭐⭐", "3" or "3 stars" → "⭐⭐⭐"; anything else → null. */
+function toRating(v) {
+  const t = String(v || '').trim();
+  const stars = (t.match(/⭐/g) || []).length;
+  const n = stars || parseInt(t, 10);
+  return n >= 1 && n <= 5 ? RATINGS[n - 1] : null;
+}
 
 function isNotFolder(name) {
   const n = String(name || '').replace(/[➕📝…]/g, '').trim().toLowerCase();
@@ -119,13 +142,23 @@ function actionSave_(body) {
         prompt: 'Already saved' + (inFolders.length ? ' in ' + inFolders.join(SEP) : ' (Inbox)') + '. Add to:',
         in_folders: inFolders,
         folders: picker.labels,
+        statuses: [SKIP].concat(STATUSES),
+        ratings: [SKIP].concat(RATINGS),
       };
     }
 
     const id = Utilities.getUuid().slice(0, 8);
     const row = [new Date(), sourceLabel(source), who ? '@' + who : '', '', url, '', note, id, 'To check', '', '', ''];
     sheet.getRange(sheet.getLastRow() + 1, 1, 1, NCOLS).setValues([row.map(safeCell)]);
-    return { id: id, existed: false, prompt: 'Save ' + label + ' to:', in_folders: [], folders: picker.labels };
+    return {
+      id: id,
+      existed: false,
+      prompt: 'Save ' + label + ' to:',
+      in_folders: [],
+      folders: picker.labels,
+      statuses: [SKIP].concat(STATUSES),
+      ratings: [SKIP].concat(RATINGS),
+    };
   } finally {
     lock.releaseLock();
   }
@@ -140,13 +173,14 @@ function actionAssign_(body) {
     .map(function (s) { return String(s); })
     .filter(function (s) {
       const t = s.trim();
-      return t && t !== NEW_FOLDER && t !== ADD_NOTE && t.indexOf('⚠️') !== 0;
+      return t && t !== NEW_FOLDER && t !== ADD_NOTE && t !== ADD_DETAILS && t.indexOf('⚠️') !== 0;
     });
   const newFolder = String(body.new_folder || '').trim();
 
   let row;
   let added = [];
   let noteAdded = false;
+  const extras = [];
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -168,6 +202,22 @@ function actionAssign_(body) {
     if (noteAdded && row.note.indexOf(note) === -1) {
       sheet.getRange(row.rowNum, COL.note).setValue(safeCell(row.note ? row.note + '\n' + note : note));
     }
+    // Status, rating and price picked in the Shortcut.
+    const status = toStatus(body.status);
+    if (status) {
+      sheet.getRange(row.rowNum, COL.status).setValue(status);
+      extras.push(status);
+    }
+    const rating = toRating(body.rating);
+    if (rating) {
+      sheet.getRange(row.rowNum, COL.rating).setValue(rating);
+      extras.push(rating);
+    }
+    const price = isBlankValue(body.price) ? '' : String(body.price).trim();
+    if (price) {
+      sheet.getRange(row.rowNum, COL.price).setValue(safeCell(price));
+      extras.push(price);
+    }
     row.folders = merged.join(SEP);
     if (added.length) setRecent_(added);
   } finally {
@@ -180,7 +230,7 @@ function actionAssign_(body) {
   }
 
   const where = added.length ? 'Saved to ' + added.join(SEP) : 'Saved to Inbox';
-  return { ok: true, folders: added, message: where + (noteAdded ? ' · 📝 note added' : '') };
+  return { ok: true, folders: added, message: where + extras.map(function (x) { return ' · ' + x; }).join('') + (noteAdded ? ' · 📝 note added' : '') };
 }
 
 /**
@@ -220,7 +270,7 @@ const RECENT_MAX = 5;
 function getRecent_() {
   try {
     const raw = PropertiesService.getScriptProperties().getProperty('RECENT');
-    return raw ? JSON.parse(raw) : [];
+    return (raw ? JSON.parse(raw) : []).filter(function (r) { return !isNotFolder(r); });
   } catch (err) {
     return [];
   }
@@ -667,7 +717,7 @@ function buildPicker(paths, recent) {
     }
   });
 
-  const labels = [NEW_FOLDER, ADD_NOTE];
+  const labels = [NEW_FOLDER, ADD_NOTE, ADD_DETAILS];
   const map = {};
   const add = function (label, path) {
     let l = label;

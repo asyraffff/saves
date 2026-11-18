@@ -59,7 +59,8 @@ Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Fo
 - Works from Threads, TikTok, Instagram, YouTube, and any other link.
 - Subfolders appear indented under their parent (`Weddings`, then `↳ Venue`).
 - Once you have more than 8 folders, your 5 most recently used ones appear at the top, marked 🕘.
-- Tick **📝 Add note…** as well as your folders to type a quick note, e.g. `RM15k, free on 12 Dec`.
+- Tick **📝 Add note…** as well as your folders to type a quick note, e.g. `free on 12 Dec`.
+- Tick **🏷️ Status, rating & price…** to set those straight away. Each list has **— Skip**.
 - You get the "Saved to …" notification right away. The author and text fill in a few seconds later. Instagram often hides details from Google's servers, so an Instagram post may save with only its link and author. Add a Note if you need the context.
 
 **Saves tab:** every post, one per row. For planning (e.g. weddings), each post also has:
