@@ -47,10 +47,16 @@ Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Fo
 
 ## Using it
 
-**Browse tab:** your main view.
-- Tap **B1** and pick a folder, **All saves**, or **Inbox** (posts not in any folder yet). Picking `Recipes` also shows posts in `Recipes / Desserts`.
-- Type in **B2** to search text, authors, folders and notes.
-- Tap a link to open the post in Threads or TikTok.
+**Browse tab:** your main view, sized for the phone.
+- Tap the yellow **📁 Folder** cell and pick a folder, **All saves**, or **Inbox** (posts not in any folder yet). Picking `Weddings` also shows posts in `Weddings / Venue`.
+- Type in the yellow **🔎 Search** cell to search text, authors, folders and notes.
+- Next to these you'll see how many posts are shown, and how many are still unsorted in the Inbox.
+- Each post shows 🧵 (Threads) or 🎵 (TikTok). Tap **Open ↗** to open it in the app.
+
+**Saving from the share sheet:**
+- Subfolders appear indented under their parent (`Weddings`, then `↳ Venue`).
+- Once you have more than 8 folders, your 5 most recently used ones appear at the top, marked 🕘.
+- You get the "Saved to …" notification right away. The author and text fill in a few seconds later.
 
 **Saves tab:** every post, one per row.
 - To change a post's folders, tap its **Folders** cell and tick the folders, or type `Ideas, Recipes / Desserts`.
@@ -73,7 +79,8 @@ On a computer, the **Saves** menu also has *Rename or move folder…*, *Delete f
 
 ## Updating the script later
 1. Paste the new code into Apps Script and save.
-2. Go to **Deploy → Manage deployments**, click the ✏️ pencil, set **Version: New version**, then click **Deploy**.
+2. Pick **`setup`** in the function dropdown and click **▶ Run**. This applies layout changes and asks for any new permission. Your folders, posts and token are kept.
+3. Go to **Deploy → Manage deployments**, click the ✏️ pencil, set **Version: New version**, then click **Deploy**.
 
 Your Web app URL stays the same, so the Shortcut keeps working.
 

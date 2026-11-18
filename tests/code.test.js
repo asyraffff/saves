@@ -47,7 +47,10 @@ describe('setup', () => {
     expect(env.sheets.get('Saves').dump()[0]).toEqual(['Saved', 'Source', 'Author', 'Text', 'Link', 'Folders', 'Note', 'ID']);
     expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas', 'Recipes']);
     expect(token).toMatch(/^svs_[0-9a-f]{40}$/);
-    expect(env.sheets.get('Browse').formulas['5,1']).toContain('FILTER(Saves!A2:G');
+    const browse = env.sheets.get('Browse').formulas['5,1'];
+    expect(browse).toContain('FILTER(Saves!A2:G');
+    expect(browse).toContain('HYPERLINK(u, "Open ↗")');
+    expect(browse).not.toContain('$B$1');
   });
 
   it('is safe to run twice (keeps folders and token)', () => {
@@ -81,6 +84,11 @@ describe('Shortcut flow', () => {
     });
     expect(assigned.message).toBe('Saved to Ideas, ⭐ Favourites, Recipes / Desserts');
     [row] = savesRows();
+    expect(row[3]).toBe(''); // details come in the background
+    expect(env.triggers).toEqual(['fillDetailsInBackground']);
+    gas.fillDetailsInBackground();
+    expect(env.triggers).toEqual([]);
+    [row] = savesRows();
     expect(row[5]).toBe('Ideas, ⭐ Favourites, Recipes / Desserts');
     expect(row[3]).toBe("Let's do this. Welcome to Threads. 🔥");
     expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas', 'Recipes', 'Recipes / Desserts']);
@@ -90,6 +98,7 @@ describe('Shortcut flow', () => {
     const first = post({ action: 'save', input: 'Check this out! https://vm.tiktok.com/ZMabc/ #fyp' });
     expect(savesRows()[0][4]).toBe('https://www.tiktok.com/@/video/123');
     post({ action: 'assign', id: first.id, folders: 'Ideas' });
+    gas.fillDetailsInBackground();
     const [row] = savesRows();
     expect(row[2]).toBe('@tiktok');
     expect(row[3]).toBe('frogs 🐸');
@@ -110,6 +119,7 @@ describe('Shortcut flow', () => {
     let [row] = savesRows();
     expect(row[4]).toBe('https://www.threads.com/@chef.amir/post/DAbC123xyz');
     post({ action: 'assign', id: first.id, folders: 'Recipes' });
+    gas.fillDetailsInBackground();
     [row] = savesRows();
     expect(row[2]).toBe('@chef.amir');
     expect(row[3]).toBe('Mug cake recipe');
@@ -117,6 +127,17 @@ describe('Shortcut flow', () => {
     const again = post({ action: 'save', input: 'https://www.threads.net/@chef.amir/post/DAbC123xyz?xmt=1' });
     expect(again.existed).toBe(true);
     expect(savesRows()).toHaveLength(1);
+  });
+
+  it('Shortcut list shows subfolders indented, and assign understands those labels', () => {
+    const s0 = post({ action: 'save', input: 'https://www.threads.com/@a/post/W1' });
+    post({ action: 'assign', id: s0.id, folders: '', new_folder: 'Weddings / Venue' });
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/W2' });
+    expect(s.folders).toEqual(['➕ New folder…', '⭐ Favourites', 'Ideas', 'Recipes', 'Weddings', '↳ Venue']);
+    const res = post({ action: 'assign', id: s.id, folders: 'Weddings\n↳ Venue' });
+    expect(res.message).toBe('Saved to Weddings, Weddings / Venue');
+    expect(savesRows()[1][5]).toBe('Weddings, Weddings / Venue');
+    expect(JSON.parse(env.props.get('RECENT'))[0]).toBe('Weddings');
   });
 
   it('cancelled folder pick leaves the post in the Inbox', () => {
@@ -172,6 +193,36 @@ describe('folder management', () => {
     gas.onEdit({ range, oldValue: 'Recipes', value: undefined });
     expect(savesRows().map((r) => r[5])).toEqual(['', 'Ideas', 'Ideas']);
     expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas']);
+  });
+
+  it('pure helpers (picker)', () => {
+    const E = '  ';
+    const paths = ['Weddings', 'Ideas', 'Weddings / Venue', 'Weddings / Catering', 'Weddings / Catering / Halal', 'Trips / Bali'];
+    const { labels, map } = gas.buildPicker(paths, ['Weddings / Venue']);
+    // Few folders → no "recent" section; children indented under their parent; orphan shows full path.
+    expect(labels).toEqual([
+      '➕ New folder…',
+      'Weddings',
+      '↳ Venue',
+      '↳ Catering',
+      E + '↳ Halal',
+      'Ideas',
+      'Trips / Bali',
+    ]);
+    expect(gas.labelToPath(E + '↳ Halal', map)).toBe('Weddings / Catering / Halal');
+    expect(gas.labelToPath('Brand new / Thing', map)).toBe('Brand new / Thing');
+    expect(gas.labelToPath('↳ Gone', map)).toBeNull();
+
+    // Same child name under two parents gets disambiguated.
+    const dup = gas.buildPicker(['Weddings', 'Weddings / Venue', 'Birthday', 'Birthday / Venue'], []);
+    expect(dup.labels).toContain('↳ Venue (Birthday)');
+    expect(dup.map['↳ Venue (Birthday)']).toBe('Birthday / Venue');
+
+    // Many folders → up to 5 recent ones on top.
+    const many = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'Weddings', 'Weddings / Venue'];
+    const r = gas.buildPicker(many, ['Weddings / Venue', 'Gone', 'C']);
+    expect(r.labels.slice(0, 3)).toEqual(['➕ New folder…', '🕘 Weddings / Venue', '🕘 C']);
+    expect(r.map['🕘 C']).toBe('C');
   });
 
   it('pure helpers', () => {

@@ -94,6 +94,7 @@ export function loadScript({ fetch: fetchImpl } = {}) {
   );
 
   const fetchLog = [];
+  const triggers = [];
   const context = {
     console: { log() {}, warn() {}, error() {} },
     SpreadsheetApp: {
@@ -113,7 +114,18 @@ export function loadScript({ fetch: fetchImpl } = {}) {
       MimeType: { JSON: 'json' },
       createTextOutput: (s) => ({ setMimeType: () => ({ body: s, json: () => JSON.parse(s) }) }),
     },
-    ScriptApp: { getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }) },
+    ScriptApp: {
+      getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }),
+      getProjectTriggers: () => triggers.map((h) => ({ getHandlerFunction: () => h, handler: h })),
+      newTrigger: (h) => {
+        const b = { timeBased: () => b, after: () => b, create: () => triggers.push(h) };
+        return b;
+      },
+      deleteTrigger: (t) => {
+        const i = triggers.indexOf(t.handler);
+        if (i >= 0) triggers.splice(i, 1);
+      },
+    },
     UrlFetchApp: {
       fetch: (url, opts) => {
         fetchLog.push({ url, opts });
@@ -131,5 +143,5 @@ export function loadScript({ fetch: fetchImpl } = {}) {
   // Expose top-level declarations on the context, like Apps Script's global scope.
   const names = [...code.matchAll(/^(?:function|const|class)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);
   vm.runInContext(`${code}\n;globalThis.__exports = { ${names.join(', ')} };`, context);
-  return { gas: context.__exports, ss, sheets, props, fetchLog };
+  return { gas: context.__exports, ss, sheets, props, fetchLog, triggers };
 }

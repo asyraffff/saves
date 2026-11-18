@@ -89,7 +89,7 @@ function actionSave_(body) {
     const sheet = sheet_(SAVES);
     const rows = readRows_(sheet);
     const existing = rows.find(function (r) { return r.link === url; });
-    const folders = listFolders_();
+    const picker = buildPicker(listFolders_(), getRecent_());
     const who = authorFromUrl(url);
     const label = who ? '@' + who : sourceLabel(source);
 
@@ -100,14 +100,14 @@ function actionSave_(body) {
         existed: true,
         prompt: 'Already saved' + (inFolders.length ? ' in ' + inFolders.join(SEP) : ' (Inbox)') + '. Add to:',
         in_folders: inFolders,
-        folders: [NEW_FOLDER].concat(folders),
+        folders: picker.labels,
       };
     }
 
     const id = Utilities.getUuid().slice(0, 8);
     const row = [new Date(), sourceLabel(source), who ? '@' + who : '', '', url, '', note, id];
     sheet.getRange(sheet.getLastRow() + 1, 1, 1, NCOLS).setValues([row.map(safeCell)]);
-    return { id: id, existed: false, prompt: 'Save ' + label + ' to:', in_folders: [], folders: [NEW_FOLDER].concat(folders) };
+    return { id: id, existed: false, prompt: 'Save ' + label + ' to:', in_folders: [], folders: picker.labels };
   } finally {
     lock.releaseLock();
   }
@@ -118,11 +118,10 @@ function actionAssign_(body) {
   const id = String(body.id || '').trim();
   if (!id) throw new UserError('Missing id. Check the Shortcut sends the id from the first step.');
 
-  const chosen = (Array.isArray(body.folders) ? body.folders : String(body.folders || '').split(/\r?\n/))
-    .map(function (s) { return String(s).trim(); })
-    .filter(function (s) { return s && s !== NEW_FOLDER && s.indexOf('⚠️') !== 0; });
+  const picked = (Array.isArray(body.folders) ? body.folders : String(body.folders || '').split(/\r?\n/))
+    .map(function (s) { return String(s); })
+    .filter(function (s) { return s.trim() && s.trim() !== NEW_FOLDER && s.trim().indexOf('⚠️') !== 0; });
   const newFolder = String(body.new_folder || '').trim();
-  if (newFolder) chosen.push(newFolder);
 
   let row;
   let added = [];
@@ -133,21 +132,70 @@ function actionAssign_(body) {
     row = readRows_(sheet).find(function (r) { return r.id === id; });
     if (!row) throw new UserError('That saved post was not found.');
 
-    added = chosen.map(cleanFolderName).filter(Boolean);
+    // Turn the list labels ("↳ Venue", "🕘 Weddings / Venue") back into folder paths.
+    const picker = buildPicker(listFolders_(), getRecent_());
+    added = picked.map(function (label) { return labelToPath(label, picker.map); }).filter(Boolean);
+    if (newFolder) added.push(cleanFolderName(newFolder));
+    added = uniq(added.filter(Boolean));
     added.forEach(ensureFolder_);
     const merged = uniq(splitFolders(row.folders).concat(added));
     sheet.getRange(row.rowNum, COL.folders).setValue(safeCell(merged.join(SEP)));
     if (typeof body.note === 'string' && body.note.trim()) sheet.getRange(row.rowNum, COL.note).setValue(safeCell(body.note.trim()));
     row.folders = merged.join(SEP);
+    if (added.length) setRecent_(added);
   } finally {
     lock.releaseLock();
   }
 
-  // Fetch author/text after filing, so the folder list appeared quickly.
-  if (!row.text) fillDetails_(row);
+  // Author/text are fetched in the background so the notification shows sooner.
+  if (!row.text || isShortLink(row.link)) {
+    if (!scheduleBackgroundFill_()) fillDetails_(row);
+  }
 
-  const names = uniq(added);
-  return { ok: true, folders: names, message: names.length ? 'Saved to ' + names.join(SEP) : 'Saved to Inbox' };
+  return { ok: true, folders: added, message: added.length ? 'Saved to ' + added.join(SEP) : 'Saved to Inbox' };
+}
+
+// ═════════════════════════ Recent folders & background work ═════════════════════════
+
+const RECENT_MAX = 5;
+
+function getRecent_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty('RECENT');
+    return raw ? JSON.parse(raw) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function setRecent_(used) {
+  const next = uniq(used.concat(getRecent_())).slice(0, RECENT_MAX * 2);
+  PropertiesService.getScriptProperties().setProperty('RECENT', JSON.stringify(next));
+}
+
+/** Run fillDetailsInBackground() in a few seconds, unless one is already queued. */
+function scheduleBackgroundFill_() {
+  try {
+    const pending = ScriptApp.getProjectTriggers().some(function (t) {
+      return t.getHandlerFunction() === 'fillDetailsInBackground';
+    });
+    if (!pending) ScriptApp.newTrigger('fillDetailsInBackground').timeBased().after(5 * 1000).create();
+    return true;
+  } catch (err) {
+    console.warn('Could not schedule background fill (run setup once to allow triggers): ' + err);
+    return false;
+  }
+}
+
+/** Trigger handler: fills author/text for recent saves that are missing them. */
+function fillDetailsInBackground() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'fillDetailsInBackground') ScriptApp.deleteTrigger(t);
+  });
+  readRows_(sheet_(SAVES))
+    .filter(function (r) { return r.link && (!r.text || isShortLink(r.link)); })
+    .slice(-10)
+    .forEach(fillDetails_);
 }
 
 // ═════════════════════════ Sheet helpers ═════════════════════════
@@ -208,8 +256,12 @@ function ensureFolder_(name) {
 
 function fillDetails_(row) {
   try {
-    const p = fetchPreview_(row.link);
+    const link = isShortLink(row.link) ? normalizeUrl(expandShortLink_(row.link)) : row.link;
+    const p = fetchPreview_(link);
+    if (link !== row.link) p.url = p.url || link;
     const sheet = sheet_(SAVES);
+    // Rows may have been deleted/moved while we fetched: only write if it's still the same post.
+    if (String(sheet.getRange(row.rowNum, COL.id).getValue()) !== row.id) return;
     if (p.author) sheet.getRange(row.rowNum, COL.author).setValue(safeCell('@' + p.author));
     if (p.text) sheet.getRange(row.rowNum, COL.text).setValue(safeCell(p.text.slice(0, 2000)));
     if (p.url && p.url !== row.link) sheet.getRange(row.rowNum, COL.link).setValue(safeCell(p.url));
@@ -460,6 +512,77 @@ function uniq(list) {
   });
 }
 
+const RECENT_PREFIX = '🕘 ';
+const CHILD_MARK = '↳ ';
+const INDENT = '  '; // em spaces: iOS keeps them, so nesting stays visible
+const RECENT_MIN_FOLDERS = 8; // with only a few folders a "recent" section is just clutter
+
+/**
+ * The list the Shortcut shows:
+ *   ➕ New folder…
+ *   🕘 Weddings / Venue        ← up to 5 recently used (only once you have many folders)
+ *   💍 Weddings
+ *   ↳ Venue
+ *   ↳ Catering
+ *     ↳ Halal caterers        ← deeper levels are indented
+ * Returns { labels: [...], map: { label: "full / path" } }.
+ */
+function buildPicker(paths, recent) {
+  const lower = {};
+  paths.forEach(function (p) { lower[p.toLowerCase()] = p; });
+
+  // Children are grouped under their parent, keeping Folders-tab order.
+  const kids = {};
+  const roots = [];
+  paths.forEach(function (p) {
+    const parts = splitPath(p);
+    const parent = parts.slice(0, -1).join(' / ');
+    if (parts.length > 1 && lower[parent.toLowerCase()]) {
+      const key = lower[parent.toLowerCase()];
+      (kids[key] = kids[key] || []).push(p);
+    } else {
+      roots.push(p);
+    }
+  });
+
+  const labels = [NEW_FOLDER];
+  const map = {};
+  const add = function (label, path) {
+    let l = label;
+    if (map[l] !== undefined) l = label + ' (' + splitPath(path).slice(0, -1).join(' / ') + ')';
+    labels.push(l);
+    map[l] = path;
+  };
+
+  if (paths.length > RECENT_MIN_FOLDERS) {
+    (recent || [])
+      .map(function (r) { return lower[String(r).toLowerCase()]; })
+      .filter(Boolean)
+      .slice(0, RECENT_MAX)
+      .forEach(function (p) { add(RECENT_PREFIX + p, p); });
+  }
+
+  const walk = function (p, depth, isRoot) {
+    const parts = splitPath(p);
+    // A root that is really a subfolder (its parent row is missing) shows its full path.
+    const name = isRoot ? parts.join(' / ') : parts[parts.length - 1];
+    add(depth === 0 ? name : INDENT.repeat(depth - 1) + CHILD_MARK + name, p);
+    (kids[p] || []).forEach(function (k) { walk(k, depth + 1, false); });
+  };
+  roots.forEach(function (r) { walk(r, 0, true); });
+  return { labels: labels, map: map };
+}
+
+/** A label the user picked → folder path. Falls back to treating the label as a typed path. */
+function labelToPath(label, map) {
+  if (map[label] !== undefined) return map[label];
+  const trimmed = String(label).trim();
+  if (map[trimmed] !== undefined) return map[trimmed];
+  if (trimmed.indexOf(RECENT_PREFIX.trim()) === 0) return cleanFolderName(trimmed.slice(RECENT_PREFIX.trim().length));
+  if (trimmed.indexOf(CHILD_MARK.trim()) === 0 || /^[\s ]/.test(label)) return null; // stale indented label
+  return cleanFolderName(trimmed);
+}
+
 /** Stop shared text like "=IMPORTXML(...)" from becoming a formula. */
 function safeCell(v) {
   return typeof v === 'string' && /^[=+\-@]/.test(v) ? "'" + v : v;
@@ -707,24 +830,48 @@ function setup() {
     );
   }
 
-  // ── Browse ──
+  saves.hideColumns(COL.id); // internal ID, not useful to look at
+
+  // ── Browse (phone-friendly) ──
+  //  📁 Folder  [ Weddings / Venue ▾ ]   12 posts
+  //  🔎 Search  [                    ]   📥 3 unsorted in Inbox
+  //  Saved | 🧵 | Who | Post | Link (Open ↗) | Folders | Note
   const browse = getOrCreateSheet_(BROWSE, 0);
-  browse.getRange('A1:A2').setValues([['Folder'], ['Search']]).setFontWeight('bold');
-  if (!browse.getRange('B1').getValue()) browse.getRange('B1').setValue('Inbox');
-  browse.getRange('B1:B2').setBackground('#fff8d6');
-  browse.getRange('C1').setValue('← pick a folder (or All saves / Inbox)').setFontColor('#888888');
-  browse.getRange('C2').setValue('← type to search text, author, notes').setFontColor('#888888');
+  // Keep the folder you were looking at (older layouts kept it in B1).
+  const oldLayout = String(browse.getRange('A1').getValue()) === 'Folder';
+  const current = String(browse.getRange(oldLayout ? 'B1' : 'D1').getValue() || 'Inbox');
+  const search = String(browse.getRange(oldLayout ? 'B2' : 'D2').getValue() || '');
+  const top = browse.getRange('A1:G3');
+  top.breakApart();
+  top.clearContent();
+  top.clearDataValidations();
+  top.setBackground(null).setFontColor(null).setFontWeight('normal');
+
+  browse.getRange('A1:C1').merge().setValue('📁 Folder').setFontWeight('bold');
+  browse.getRange('A2:C2').merge().setValue('🔎 Search').setFontWeight('bold');
+  browse.getRange('D1').setValue(current).setBackground('#fff8d6');
+  browse.getRange('D2').setValue(search).setBackground('#fff8d6');
+  browse.getRange('E1:G1').merge().setFormula('=IF($A$5="Nothing here yet", "0 posts", COUNTA($A$5:$A) & " posts")').setFontColor('#666666');
+  browse.getRange('E2:G2').merge()
+    .setFormula('="📥 " & COUNTIFS(Saves!E2:E, "<>", Saves!F2:F, "") & " unsorted in Inbox"')
+    .setFontColor('#666666');
+
   browse.getRange('Z1').setFormula('={"All saves";"Inbox";IFERROR(FILTER(Folders!A2:A, Folders!A2:A<>""), "")}');
   browse.hideColumns(26);
-  browse.getRange('B1').setDataValidation(
+  browse.getRange('D1').setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInRange(browse.getRange('Z1:Z'), true).setAllowInvalid(false).build(),
   );
-  browse.getRange(4, 1, 1, 7).setValues([HEADERS.slice(0, 7)]).setFontWeight('bold').setBackground('#111111').setFontColor('#ffffff');
+
+  browse.getRange(4, 1, 1, 7)
+    .setValues([['Saved', '', 'Who', 'Post', 'Link', 'Folders', 'Note']])
+    .setFontWeight('bold').setBackground('#111111').setFontColor('#ffffff');
   browse.getRange('A5').setFormula(BROWSE_FORMULA);
-  browse.getRange('A5:A').setNumberFormat('d mmm yyyy');
+  browse.getRange('A5:A').setNumberFormat('d mmm');
+  browse.getRange('A5:G').setVerticalAlignment('top');
   browse.getRange('D5:D').setWrap(true);
+  browse.getRange('F5:G').setWrap(true);
   browse.setFrozenRows(4);
-  [110, 70, 120, 360, 220, 200, 200].forEach(function (w, i) { browse.setColumnWidth(i + 1, w); });
+  [62, 30, 105, 240, 62, 150, 150].forEach(function (w, i) { browse.setColumnWidth(i + 1, w); });
 
   // Remove the default empty "Sheet1".
   const blank = ss.getSheetByName('Sheet1');
@@ -735,13 +882,20 @@ function setup() {
   showToken();
 }
 
+// Newest first; a 🧵/🎵 icon instead of a Source column; a short "Open ↗" link instead of the URL.
 const BROWSE_FORMULA =
-  '=IFERROR(SORT(FILTER(Saves!A2:G, Saves!E2:E<>"",' +
-  ' IF($B$1="Inbox", Saves!F2:F="",' +
-  '  IF(OR($B$1="", $B$1="All saves"), Saves!E2:E<>"",' +
-  '   (ISNUMBER(FIND(", "&$B$1&",", ", "&Saves!F2:F&",")) + ISNUMBER(FIND(", "&$B$1&" / ", ", "&Saves!F2:F))) > 0)),' +
-  ' IF($B$2="", Saves!E2:E<>"", ISNUMBER(SEARCH($B$2, Saves!C2:C&" "&Saves!D2:D&" "&Saves!F2:F&" "&Saves!G2:G)))' +
-  '), 1, FALSE), "Nothing here yet")';
+  '=IFERROR(LET(rows, SORT(FILTER(Saves!A2:G, Saves!E2:E<>"",' +
+  ' IF($D$1="Inbox", Saves!F2:F="",' +
+  '  IF(OR($D$1="", $D$1="All saves"), Saves!E2:E<>"",' +
+  '   (ISNUMBER(FIND(", "&$D$1&",", ", "&Saves!F2:F&",")) + ISNUMBER(FIND(", "&$D$1&" / ", ", "&Saves!F2:F))) > 0)),' +
+  ' IF($D$2="", Saves!E2:E<>"", ISNUMBER(SEARCH($D$2, Saves!C2:C&" "&Saves!D2:D&" "&Saves!F2:F&" "&Saves!G2:G)))' +
+  '), 1, FALSE),' +
+  ' HSTACK(INDEX(rows,,1),' +
+  '  MAP(INDEX(rows,,2), LAMBDA(s, IF(s="TikTok", "🎵", IF(s="Threads", "🧵", "🔗")))),' +
+  '  INDEX(rows,,3), INDEX(rows,,4),' +
+  '  MAP(INDEX(rows,,5), LAMBDA(u, HYPERLINK(u, "Open ↗"))),' +
+  '  INDEX(rows,,6), INDEX(rows,,7))),' +
+  ' "Nothing here yet")';
 
 function newToken_() {
   const token = 'svs_' + Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 8);
