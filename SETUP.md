@@ -1,63 +1,86 @@
-# Setup (one time, about 15 minutes)
+# Setup (one time, about 10 minutes)
 
-You need three free accounts: **GitHub** (you have it), **Supabase** (database + login), and **Vercel** (hosting).
+All you need is your Google account. Do steps 1–5 on a **computer**, because Apps Script can't be edited in the iPhone app.
 
-## 1. Supabase: database and login
+## 1. Create the sheet
+1. Go to <https://sheets.new>.
+2. Rename it **Saves**: click "Untitled spreadsheet" at the top left.
 
-1. Go to <https://supabase.com>, sign in with GitHub, click **New project**.
-   - Name: `saves`. Pick a strong database password (save it in your password manager). Region: the closest to you (e.g. Singapore).
-2. When the project is ready, open **SQL Editor → New query**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql), and click **Run**. You should see "Success".
-3. Open **Project Settings → API keys** (or **Settings → API**) and keep these three values handy:
-   - **Project URL** (e.g. `https://abcd1234.supabase.co`)
-   - **anon / publishable** key
-   - **service_role / secret** key (never share this one)
+## 2. Add the script
+1. In the sheet, open **Extensions → Apps Script**. A new tab opens.
+2. Click "Untitled project" and rename it **Saves**.
+3. In `Code.gs`, **delete everything**. Paste the whole of [`apps-script/Code.js`](apps-script/Code.js); the raw file is at <https://raw.githubusercontent.com/asyraffff/saves/main/apps-script/Code.js>, where Ctrl+A then Ctrl+C copies it.
+4. Press **Ctrl+S** to save.
 
-> Free Supabase projects pause after about a week with no activity. If you stop using the app for a while, open the Supabase dashboard and click **Restore**.
+## 3. Run setup and allow access
+1. In the toolbar, pick **`setup`** from the function dropdown, then click **▶ Run**.
+2. Google asks for permission. Click **Review permissions** and choose your account.
+3. You'll see **"Google hasn't verified this app"**. That's expected, because it's your own script. Click **Advanced**, then **Go to Saves (unsafe)**, then **Allow**.
+   It asks to see and edit this spreadsheet, and to fetch post details from Threads and TikTok.
+4. The **Execution log** at the bottom shows your **Shortcut token** (`svs_…`). You can see it again any time later.
 
-## 2. Vercel: host the app
+Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Folders**.
 
-1. Go to <https://vercel.com>, sign in with GitHub, click **Add New… → Project**, and import **asyraffff/saves**.
-2. Framework preset: **Vite** (auto-detected). Before deploying, open **Environment Variables** and add:
+## 4. Publish it as a web app (for the Shortcut)
+1. In Apps Script, click **Deploy** (top right), then **New deployment**.
+2. Click the ⚙️ gear next to "Select type" and choose **Web app**.
+3. Fill in:
+   - Description: `Saves`
+   - **Execute as: Me**
+   - **Who has access: Anyone**
+4. Click **Deploy** (approve again if asked), then **copy the Web app URL**. It ends in `/exec`.
 
-   | Name | Value |
-   |---|---|
-   | `VITE_SUPABASE_URL` | your Project URL |
-   | `VITE_SUPABASE_ANON_KEY` | your anon / publishable key |
-   | `SUPABASE_SERVICE_ROLE_KEY` | your service_role / secret key |
+> "Anyone" only means the Shortcut can reach it without a Google login. Every request must include your secret token, and without the token nothing is read or written.
 
-3. Click **Deploy**. You get an address like `https://saves-xxxx.vercel.app`. That is your **app address**.
+## 5. Let a post have several folders
+1. Reload the sheet. A **Saves** menu appears. **Saves → Show Shortcut token** shows your token and the Web app URL together.
+2. Open the **Saves** tab and click cell **F2**. It has a dropdown arrow.
+3. Open **Data → Data validation**, click the rule shown on the right, tick **Allow multiple selections**, then click **Done**.
 
-## 3. Point Supabase login at your app
-
-Supabase → **Authentication → URL Configuration**:
-- **Site URL**: your app address (e.g. `https://saves-xxxx.vercel.app`)
-- **Redirect URLs**: add the same address.
-
-This makes the "confirm your email" link go back to your app.
-
-## 4. Install on your iPhone
-
-1. Open your app address in **Safari** on the iPhone.
-2. Tap **Share → Add to Home Screen → Add**.
-3. Open **Saves** from the Home Screen, tap **Create an account**, then confirm the email and sign in.
-
-## 5. Add Saves to the share sheet
-
-In the app: **☰ → Settings & Shortcut → Create Shortcut token**. Then follow [SHORTCUT.md](SHORTCUT.md).
+## 6. On your iPhone
+1. Install **Google Sheets** from the App Store and open the **Saves** sheet.
+2. Build the share-sheet Shortcut using [SHORTCUT.md](SHORTCUT.md), with your Web app URL and token.
 
 ---
 
-## Running locally (optional, for development)
+## Using it
+
+**Browse tab:** your main view.
+- Tap **B1** and pick a folder, **All saves**, or **Inbox** (posts not in any folder yet). Picking `Recipes` also shows posts in `Recipes / Desserts`.
+- Type in **B2** to search text, authors, folders and notes.
+- Tap a link to open the post in Threads or TikTok.
+
+**Saves tab:** every post, one per row.
+- To change a post's folders, tap its **Folders** cell and tick the folders, or type `Ideas, Recipes / Desserts`.
+- Add your own **Note**.
+- To delete a post, delete its row.
+
+**Folders tab:** your folders, one per row. These changes work on the iPhone too:
+
+| To… | Do this |
+|---|---|
+| Add a folder | Type a name in an empty row. Use `/` for subfolders, e.g. `Recipes / Desserts`. |
+| Rename a folder | Edit its cell. Every post and subfolder updates automatically. |
+| Move a folder | Rename it with a new path, e.g. `Desserts` becomes `Food / Desserts`. |
+| Delete a folder | Clear its cell. It's removed from posts; the posts themselves are kept. |
+| Reorder folders | Drag the rows. The Shortcut shows folders in this order, so put favourites at the top. |
+
+The **Posts** column counts the posts in each folder.
+
+On a computer, the **Saves** menu also has *Rename or move folder…*, *Delete folder…* and *Fill missing post details*.
+
+## Updating the script later
+1. Paste the new code into Apps Script and save.
+2. Go to **Deploy → Manage deployments**, click the ✏️ pencil, set **Version: New version**, then click **Deploy**.
+
+Your Web app URL stays the same, so the Shortcut keeps working.
+
+## Development
 
 ```powershell
-copy .env.example .env.local   # then fill in the three values
 npm install
-npm run dev                     # http://localhost:5173 (the /api routes run too)
-npm test                        # unit tests
+npm test           # runs Code.js against a fake in-memory spreadsheet
+npm run test:live  # checks the Threads/TikTok parsers against real pages
 ```
 
-Live check against real Threads/TikTok pages (PowerShell):
-
-```powershell
-$env:LIVE=1; npx vitest run tests/live.test.ts
-```
+The earlier web-app version (React + Supabase + Vercel) is kept at the git tag `v0-pwa-supabase`.
