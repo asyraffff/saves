@@ -114,6 +114,24 @@ The first time, iOS asks to allow the Shortcut to connect to `script.google.com`
 
 Each save takes a few seconds, because Google's script servers need a moment to start.
 
+## Weekly review reminder
+
+This is a second, small automation. It reminds you to review your saves and opens the Review page.
+
+1. In the **Shortcuts** app, tap **Automation** (bottom) → **＋** (or **New Automation**) → **Time of Day**.
+2. Pick a time, e.g. **9:00 PM**, then **Weekly** and choose a day, e.g. Sunday. Select **Run Immediately**, then tap **Next**.
+3. Tap **New Blank Automation**, then add these 5 actions:
+   1. **Get Contents of URL**: your **URL**, Method **POST**, Request Body **JSON**, two **Text** fields:
+      - `action` = `summary`
+      - `token` = your **TOKEN**
+   2. **Get Dictionary Value**: Get **Value** for key `message` in **Contents of URL**
+   3. **Show Alert**: **Dictionary Value**. Tap ▸ and keep **Show Cancel Button** on.
+   4. **Get Dictionary Value**: Get **Value** for key `review_url` in **Contents of URL** (from action 1)
+   5. **Open URLs**: **Dictionary Value** (from action 4)
+4. Tap **Done**.
+
+Every week you'll see *"🗂️ 12 saves to review (…)"*. Tap **OK** to open the Review page, or **Cancel** to skip this week.
+
 ## Troubleshooting
 
 | You see | Fix |

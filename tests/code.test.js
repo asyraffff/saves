@@ -43,7 +43,7 @@ beforeEach(() => {
 
 describe('setup', () => {
   it('creates the three tabs, starter folders, a token and the Browse formula', () => {
-    expect([...env.sheets.keys()].sort()).toEqual(['Browse', 'Folders', 'Saves']);
+    expect([...env.sheets.keys()].sort()).toEqual(['Browse', 'Folders', 'Saves', 'Shortlist']);
     expect(env.sheets.get('Saves').dump()[0]).toEqual(['Saved', 'Source', 'Author', 'Text', 'Link', 'Folders', 'Note', 'ID', 'Status', 'Rating', 'Price', 'Contact']);
     expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas', 'Recipes']);
     expect(token).toMatch(/^svs_[0-9a-f]{40}$/);
@@ -85,9 +85,9 @@ describe('Shortcut flow', () => {
     expect(assigned.message).toBe('Saved to Ideas, ⭐ Favourites, Recipes / Desserts');
     [row] = savesRows();
     expect(row[3]).toBe(''); // details come in the background
-    expect(env.triggers).toEqual(['fillDetailsInBackground']);
+    expect(env.triggers).toEqual(['autoArchive', 'fillDetailsInBackground']);
     gas.fillDetailsInBackground();
-    expect(env.triggers).toEqual([]);
+    expect(env.triggers).toEqual(['autoArchive']);
     [row] = savesRows();
     expect(row[5]).toBe('Ideas, ⭐ Favourites, Recipes / Desserts');
     expect(row[3]).toBe("Let's do this. Welcome to Threads. 🔥");
@@ -340,5 +340,97 @@ describe('status, rating & price from the Shortcut', () => {
     expect(gas.toRating('9')).toBe(null);
     expect(gas.toStatus('booked')).toBe('Booked');
     expect(gas.toStatus('maybe')).toBe(null);
+  });
+});
+
+describe('review page, summary, auto-archive', () => {
+  const save = (url, folders) => {
+    const s = post({ action: 'save', input: url });
+    post({ action: 'assign', id: s.id, folders });
+    return s.id;
+  };
+
+  it('new folders go right under the last folder, even with the Posts formula filling column B', () => {
+    env.sheets.get('Folders').set(1000, 2, ''); // like the formula's empty results
+    env.sheets.get('Folders').set(1000, 2, 0);
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/F1' });
+    post({ action: 'assign', id: s.id, folders: '', new_folder: 'Weddings / Rings' });
+    const col = env.sheets.get('Folders').dump().map((r) => r[0]);
+    expect(col.slice(1, 6)).toEqual(['⭐ Favourites', 'Ideas', 'Recipes', 'Weddings', 'Weddings / Rings']);
+    expect(col.length).toBe(1000);
+  });
+
+  it('setup moves stranded folders back up', () => {
+    env.sheets.get('Folders').set(1001, 1, 'Places');
+    gas.setup();
+    expect(folderNames()).toEqual(['⭐ Favourites', 'Ideas', 'Recipes', 'Places']);
+    expect(env.sheets.get('Folders').cell(5, 1)).toBe('Places');
+  });
+
+  it('reviewData lists "To check" posts newest first, by folder, with the shortlist', () => {
+    const a = save('https://www.threads.com/@a/post/R1', 'Weddings / Venue');
+    const b = save('https://www.threads.com/@b/post/R2', 'Ideas');
+    const c = save('https://www.threads.com/@c/post/R3', '');
+    expect(() => gas.reviewData('nope', '')).toThrow();
+    let d = gas.reviewData(token, '');
+    expect(d.posts.map((p) => p.id)).toEqual([c, b, a]);
+    expect(d.total).toBe(3);
+    expect(gas.reviewData(token, 'Weddings').posts.map((p) => p.id)).toEqual([a]);
+    expect(gas.reviewData(token, '__inbox__').posts.map((p) => p.id)).toEqual([c]);
+
+    const res = gas.reviewUpdate(token, a, { status: 'Shortlisted', rating: '⭐⭐⭐⭐', price: 'RM 15,000', contact: '012-345', note: 'nice', add_folder: 'Weddings / Shortlist trip' });
+    expect(res.prev.status).toBe('To check');
+    d = gas.reviewData(token, '');
+    expect(d.posts.map((p) => p.id)).toEqual([c, b]);
+    expect(d.shortlist.map((p) => [p.id, p.rating, p.price, p.contact, p.note])).toEqual([[a, '⭐⭐⭐⭐', 'RM 15,000', '012-345', 'nice']]);
+    expect(d.shortlist[0].folders).toEqual(['Weddings / Venue', 'Weddings / Shortlist trip']);
+    expect(folderNames()).toContain('Weddings / Shortlist trip');
+
+    // Undo puts everything back.
+    gas.reviewUpdate(token, a, res.prev);
+    const row = savesRows().find((r) => r[7] === a);
+    expect(row.slice(8, 12)).toEqual(['To check', '', '', '']);
+    expect(row[5]).toBe('Weddings / Venue');
+    expect(row[6]).toBe('');
+  });
+
+  it('serves the Review page only with the right token', () => {
+    const page = gas.doGet({ parameter: { page: 'review', token } });
+    expect(page.title).toBe('Saves Review');
+    expect(page.getContent()).toContain(JSON.stringify(token));
+    expect(page.getContent()).not.toContain('__TOKEN__');
+    expect(gas.doGet({ parameter: { page: 'review', token: 'x' } }).getContent()).toContain('out of date');
+  });
+
+  it('summary counts posts to review by folder and links the Review page', () => {
+    save('https://www.threads.com/@a/post/S1', 'Weddings / Venue');
+    save('https://www.threads.com/@b/post/S2', 'Weddings / Venue');
+    save('https://www.threads.com/@c/post/S3', '');
+    const s = post({ action: 'summary' });
+    expect(s.count).toBe(3);
+    expect(s.message).toBe('🗂️ 3 saves to review (2 Venue, 1 Inbox)');
+    expect(s.review_url).toBe('https://script.google.com/macros/s/TEST/exec?page=review&token=' + token);
+    expect(gas.summaryFor_([]).message).toContain('all caught up');
+  });
+
+  it('archives posts left "To check" for 60+ days, and only those', () => {
+    const old = save('https://www.threads.com/@a/post/O1', 'Ideas');
+    const kept = save('https://www.threads.com/@b/post/O2', 'Ideas');
+    const shortlisted = save('https://www.threads.com/@c/post/O3', 'Ideas');
+    gas.reviewUpdate(token, shortlisted, { status: 'Shortlisted' });
+    const sheet = env.sheets.get('Saves');
+    const longAgo = new Date(Date.now() - 61 * 86400000);
+    sheet.dump().forEach((r, i) => { if (i > 0 && r[7] !== kept) sheet.set(i + 1, 1, longAgo); });
+    expect(gas.autoArchive()).toBe(1);
+    const status = Object.fromEntries(savesRows().map((r) => [r[7], r[8]]));
+    expect(status).toEqual({ [old]: 'Archived', [kept]: 'To check', [shortlisted]: 'Shortlisted' });
+    expect(gas.ageText(longAgo, new Date())).toBe('2 months ago');
+    expect(gas.ageText(new Date(Date.now() - 3 * 86400000), new Date())).toBe('3 days ago');
+  });
+
+  it('setup adds the Shortlist tab and a single daily archive trigger', () => {
+    gas.setup();
+    expect(env.sheets.get('Shortlist').formulas['2,1']).toContain('FILTER(Saves!A2:L');
+    expect(env.triggers.filter((t) => t === 'autoArchive')).toHaveLength(1);
   });
 });

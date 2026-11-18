@@ -118,12 +118,18 @@ export function loadScript({ fetch: fetchImpl } = {}) {
       getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }),
       getProjectTriggers: () => triggers.map((h) => ({ getHandlerFunction: () => h, handler: h })),
       newTrigger: (h) => {
-        const b = { timeBased: () => b, after: () => b, create: () => triggers.push(h) };
+        const b = { timeBased: () => b, after: () => b, everyDays: () => b, atHour: () => b, create: () => triggers.push(h) };
         return b;
       },
       deleteTrigger: (t) => {
         const i = triggers.indexOf(t.handler);
         if (i >= 0) triggers.splice(i, 1);
+      },
+    },
+    HtmlService: {
+      createHtmlOutput: (html) => {
+        const out = { html, title: '', setTitle: (x) => { out.title = x; return out; }, addMetaTag: () => out, getContent: () => html };
+        return out;
       },
     },
     UrlFetchApp: {
@@ -141,7 +147,8 @@ export function loadScript({ fetch: fetchImpl } = {}) {
   vm.createContext(context);
   const code = readFileSync(new URL('../apps-script/Code.js', import.meta.url), 'utf8');
   // Expose top-level declarations on the context, like Apps Script's global scope.
-  const names = [...code.matchAll(/^(?:function|const|class)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);
+  // Skip template strings (the Review page HTML has its own functions).
+  const names = [...code.replace(/`[\s\S]*?`/g, '').matchAll(/^(?:function|const|class)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);
   vm.runInContext(`${code}\n;globalThis.__exports = { ${names.join(', ')} };`, context);
   return { gas: context.__exports, ss, sheets, props, fetchLog, triggers };
 }

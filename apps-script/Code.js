@@ -67,11 +67,14 @@ class UserError extends Error {}
 // ═════════════════════════ Web app (called by the Shortcut) ═════════════════════════
 
 function doPost(e) {
+  rememberExecUrl_();
   return respond_(handle_(parseBody_(e)));
 }
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
+  rememberExecUrl_();
+  if (p.page === 'review') return reviewPage_(String(p.token || ''));
   if (p.action) return respond_(handle_(p));
   return respond_({ ok: true, message: 'Saves is running. Use the iPhone Shortcut to save posts.' });
 }
@@ -100,6 +103,7 @@ function handle_(body) {
     if (action === 'save') return actionSave_(body);
     if (action === 'assign') return actionAssign_(body);
     if (action === 'folders') return { folders: listFolders_() };
+    if (action === 'summary') return actionSummary_();
     throw new UserError('Unknown action "' + action + '".');
   } catch (err) {
     const message = err instanceof UserError ? err.message : 'Error: ' + (err && err.message ? err.message : err);
@@ -240,7 +244,7 @@ function actionAssign_(body) {
 function cleanUpJunkFolders_() {
   const removed = [];
   const folders = sheet_(FOLDERS);
-  for (let r = folders.getLastRow(); r >= 2; r--) {
+  for (let r = lastFolderRow_(folders); r >= 2; r--) {
     const name = String(folders.getRange(r, 1).getValue());
     if (name.trim() && isNotFolder(cleanFolderName(name))) {
       removed.push(name.trim());
@@ -340,10 +344,22 @@ function readRows_(sheet) {
   });
 }
 
+/**
+ * Last row with a folder name in column A. (Column B's Posts formula fills every row, so
+ * getLastRow() would point at the bottom of the sheet and new folders would land below row 1000.)
+ */
+function lastFolderRow_(sheet) {
+  const last = sheet.getLastRow();
+  if (last < 1) return 0;
+  const values = sheet.getRange(1, 1, last, 1).getValues();
+  for (let i = values.length; i > 0; i--) if (String(values[i - 1][0]).trim()) return i;
+  return 0;
+}
+
 /** Folder names in the order they appear in the Folders tab (drag rows there to reorder). */
 function listFolders_() {
   const sheet = sheet_(FOLDERS);
-  const last = sheet.getLastRow();
+  const last = lastFolderRow_(sheet);
   if (last < 2) return [];
   return uniq(
     sheet.getRange(2, 1, last - 1, 1).getValues()
@@ -361,7 +377,7 @@ function ensureFolder_(name) {
   for (let i = 1; i <= parts.length; i++) {
     const path = parts.slice(0, i).join(' / ');
     if (existing.indexOf(path.toLowerCase()) === -1) {
-      sheet.appendRow([safeCell(path)]);
+      sheet.getRange(lastFolderRow_(sheet) + 1, 1).setValue(safeCell(path));
       existing.push(path.toLowerCase());
     }
   }
@@ -808,7 +824,7 @@ function applyFolderChange_(oldName, newName) {
 
   // Subfolders in the Folders tab: "Old / X" → "New / X" (or removed).
   const folders = sheet_(FOLDERS);
-  const fl = folders.getLastRow();
+  const fl = lastFolderRow_(folders);
   if (fl >= 2) {
     const fr = folders.getRange(2, 1, fl - 1, 1);
     const o = oldName.toLowerCase();
@@ -826,7 +842,7 @@ function applyFolderChange_(oldName, newName) {
 
 function removeBlankFolderRows_() {
   const folders = sheet_(FOLDERS);
-  for (let r = folders.getLastRow(); r >= 2; r--) {
+  for (let r = lastFolderRow_(folders); r >= 2; r--) {
     if (!String(folders.getRange(r, 1).getValue()).trim()) folders.deleteRow(r);
   }
 }
@@ -865,10 +881,12 @@ function onOpen() {
     .createMenu('Saves')
     .addItem('Set up / repair sheet', 'setup')
     .addItem('Show Shortcut token', 'showToken')
+    .addItem('Show Review page link', 'showReviewLink')
     .addSeparator()
     .addItem('Rename or move folder…', 'renameFolderPrompt')
     .addItem('Delete folder…', 'deleteFolderPrompt')
     .addItem('Fill missing post details', 'fillMissingDetails')
+    .addItem('Archive unreviewed posts older than 60 days', 'autoArchive')
     .addSeparator()
     .addItem('Make a new token (old one stops working)', 'resetToken')
     .addToUi();
@@ -912,7 +930,7 @@ function renameFolderPrompt() {
   if (!newName) return;
 
   const folders = sheet_(FOLDERS);
-  const names = folders.getRange(2, 1, Math.max(folders.getLastRow() - 1, 1), 1).getValues();
+  const names = folders.getRange(2, 1, Math.max(lastFolderRow_(folders) - 1, 1), 1).getValues();
   for (let i = 0; i < names.length; i++) {
     if (cleanFolderName(names[i][0]).toLowerCase() === oldName.toLowerCase()) folders.getRange(i + 2, 1).setValue(newName);
   }
@@ -937,7 +955,7 @@ function deleteFolderPrompt() {
   );
   if (ok !== ui.Button.OK) return;
   const folders = sheet_(FOLDERS);
-  for (let r = folders.getLastRow(); r >= 2; r--) {
+  for (let r = lastFolderRow_(folders); r >= 2; r--) {
     if (cleanFolderName(folders.getRange(r, 1).getValue()).toLowerCase() === name.toLowerCase()) folders.deleteRow(r);
   }
   const n = applyFolderChange_(name, '');
@@ -998,7 +1016,7 @@ function setup() {
   folders.setFrozenRows(1);
   folders.setColumnWidth(1, 260);
   folders.setColumnWidth(2, 70);
-  if (folders.getLastRow() < 2) {
+  if (lastFolderRow_(folders) < 2) {
     folders.getRange(2, 1, 3, 1).setValues([['⭐ Favourites'], ['Ideas'], ['Recipes']]);
   }
 
@@ -1018,6 +1036,9 @@ function setup() {
   saves.hideColumns(COL.id); // internal ID, not useful to look at
 
   const removed = cleanUpJunkFolders_();
+  compactFolders_();
+  setupShortlist_();
+  const archiveOn = ensureDailyArchive_();
 
   // ── Browse (phone-friendly) ──
   //  📁 Folder  [ Weddings / Venue ▾ ]   12 posts
@@ -1083,6 +1104,7 @@ function setup() {
   try {
     ss.toast(
       'Setup complete.' + (removed.length ? ' Removed junk folders: ' + removed.join(', ') + '.' : '') +
+        (archiveOn ? '' : ' (Daily auto-archive could not be turned on.)') +
         ' Use Saves → Show Shortcut token to see your token.',
       'Saves',
       10,
@@ -1149,3 +1171,496 @@ function resetToken() {
   newToken_();
   showToken();
 }
+
+// ═════════════════════════ Review page, weekly summary, auto-archive ═════════════════════════
+
+const SHORTLIST = 'Shortlist';
+const AUTO_ARCHIVE_DAYS = 60;
+const SHORTLISTED = ['Shortlisted', 'Contacted', 'Booked'];
+const INBOX_KEY = '__inbox__';
+
+function isToCheck_(r) {
+  return Boolean(r.link) && (!r.status || r.status === 'To check');
+}
+
+/** Does this post belong in `folder` (or one of its subfolders)? '' = everything, INBOX_KEY = no folder. */
+function inFolder_(r, folder) {
+  if (!folder) return true;
+  const fs = splitFolders(r.folders);
+  if (folder === INBOX_KEY) return fs.length === 0;
+  const f = folder.toLowerCase();
+  return fs.some(function (x) {
+    const l = x.toLowerCase();
+    return l === f || l.indexOf(f + ' / ') === 0;
+  });
+}
+
+function toDate_(v) {
+  if (v instanceof Date) return v;
+  if (v === '' || v === null || v === undefined) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** "today", "yesterday", "5 days ago", "2 months ago". */
+function ageText(saved, now) {
+  const d = toDate_(saved);
+  if (!d) return '';
+  const days = Math.floor(((now || new Date()).getTime() - d.getTime()) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 45) return days + ' days ago';
+  return Math.round(days / 30) + ' months ago';
+}
+
+function postForPage_(r, now) {
+  return {
+    id: r.id, source: r.source, author: r.author, text: r.text.slice(0, 3000), link: r.link,
+    folders: splitFolders(r.folders), note: r.note, status: r.status || 'To check',
+    rating: r.rating, price: r.price, contact: r.contact, age: ageText(r.saved, now),
+  };
+}
+
+/** Called by the Review page: posts still "To check" (newest first) and the shortlist. */
+function reviewData(token, folder) {
+  checkToken_(token);
+  const now = new Date();
+  const rows = readRows_(sheet_(SAVES));
+  const f = String(folder || '');
+  return {
+    posts: rows.filter(function (r) { return isToCheck_(r) && inFolder_(r, f); }).reverse()
+      .map(function (r) { return postForPage_(r, now); }),
+    shortlist: rows.filter(function (r) { return r.link && SHORTLISTED.indexOf(r.status) !== -1 && inFolder_(r, f); })
+      .map(function (r) { return postForPage_(r, now); }),
+    folders: listFolders_(),
+    total: rows.filter(isToCheck_).length,
+  };
+}
+
+/**
+ * Called by the Review page. `changes` may have status, rating, price, contact, note,
+ * folders (replaces all) and add_folder. Returns the values from before, so the page can undo.
+ */
+function reviewUpdate(token, id, changes) {
+  checkToken_(token);
+  const c = changes || {};
+  const has = function (k) { return Object.prototype.hasOwnProperty.call(c, k) && c[k] !== null && c[k] !== undefined; };
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = sheet_(SAVES);
+    const row = readRows_(sheet).find(function (r) { return r.id === String(id); });
+    if (!row) throw new UserError('That post was not found. It may have been deleted.');
+    const prev = { status: row.status, rating: row.rating, price: row.price, contact: row.contact, note: row.note, folders: row.folders };
+    const set = function (col, v) { sheet.getRange(row.rowNum, col).setValue(safeCell(v)); };
+
+    if (has('status')) {
+      const st = String(c.status) === '' ? '' : toStatus(c.status);
+      if (st !== null) set(COL.status, st);
+    }
+    if (has('rating')) {
+      const rt = String(c.rating) === '' ? '' : toRating(c.rating);
+      if (rt !== null) set(COL.rating, rt);
+    }
+    ['price', 'contact', 'note'].forEach(function (k) {
+      if (has(k)) set(COL[k], String(c[k]).trim());
+    });
+    let folders = splitFolders(row.folders);
+    if (has('folders')) folders = splitFolders(c.folders).filter(function (x) { return !isNotFolder(x); });
+    if (has('add_folder') && String(c.add_folder).trim()) {
+      const nf = cleanFolderName(c.add_folder);
+      if (nf && !isNotFolder(nf)) {
+        ensureFolder_(nf);
+        folders = uniq(folders.concat([nf]));
+        setRecent_([nf]);
+      }
+    }
+    if (has('folders') || has('add_folder')) set(COL.folders, folders.join(SEP));
+    return { ok: true, prev: prev };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** For the weekly iPhone automation: "🗂️ 12 saves to review (5 Venue, 4 Attire, 3 Inbox)". */
+function summaryFor_(rows) {
+  const todo = rows.filter(isToCheck_);
+  if (!todo.length) return { count: 0, message: '🎉 Nothing to review. You are all caught up!' };
+  const counts = {};
+  todo.forEach(function (r) {
+    const fs = splitFolders(r.folders);
+    (fs.length ? fs : ['Inbox']).forEach(function (f) {
+      const name = splitPath(f).slice(-1)[0];
+      counts[name] = (counts[name] || 0) + 1;
+    });
+  });
+  const top = Object.keys(counts)
+    .sort(function (a, b) { return counts[b] - counts[a]; })
+    .slice(0, 3)
+    .map(function (k) { return counts[k] + ' ' + k; });
+  return {
+    count: todo.length,
+    message: '🗂️ ' + todo.length + (todo.length === 1 ? ' save' : ' saves') + ' to review (' + top.join(', ') + ')',
+  };
+}
+
+function actionSummary_() {
+  const s = summaryFor_(readRows_(sheet_(SAVES)));
+  s.review_url = reviewUrl_();
+  return s;
+}
+
+function rememberExecUrl_() {
+  try {
+    const url = ScriptApp.getService().getUrl();
+    const props = PropertiesService.getScriptProperties();
+    if (url && /\/exec$/.test(url) && props.getProperty('EXEC_URL') !== url) props.setProperty('EXEC_URL', url);
+  } catch (err) {
+    /* ignore */
+  }
+}
+
+/** The Review page link (it includes your token, so keep it to yourself). '' until deployed. */
+function reviewUrl_() {
+  let url = PropertiesService.getScriptProperties().getProperty('EXEC_URL') || '';
+  if (!url) {
+    try {
+      url = ScriptApp.getService().getUrl() || '';
+    } catch (err) {
+      /* not deployed */
+    }
+  }
+  if (!/\/exec$/.test(url)) return '';
+  return url + '?page=review&token=' + encodeURIComponent(PropertiesService.getScriptProperties().getProperty('TOKEN') || '');
+}
+
+/** Daily trigger: posts left "To check" for 60+ days become "Archived" (not deleted). */
+function autoArchive() {
+  const n = archiveOld_(new Date(), AUTO_ARCHIVE_DAYS);
+  try {
+    if (ui_()) ss_().toast(n ? 'Archived ' + n + ' old unreviewed post(s).' : 'Nothing old enough to archive.', 'Saves', 6);
+  } catch (err) {
+    /* triggered run: no sheet open */
+  }
+  return n;
+}
+
+function archiveOld_(now, days) {
+  const sheet = sheet_(SAVES);
+  const rows = readRows_(sheet);
+  if (!rows.length) return 0;
+  const cutoff = now.getTime() - days * 86400000;
+  let n = 0;
+  const values = rows.map(function (r) {
+    const d = toDate_(r.saved);
+    if (isToCheck_(r) && d && d.getTime() < cutoff) {
+      n++;
+      return ['Archived'];
+    }
+    return [r.status];
+  });
+  if (n) sheet.getRange(2, COL.status, rows.length, 1).setValues(values);
+  return n;
+}
+
+function ensureDailyArchive_() {
+  try {
+    const exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'autoArchive'; });
+    if (!exists) ScriptApp.newTrigger('autoArchive').timeBased().everyDays(1).atHour(4).create();
+    return true;
+  } catch (err) {
+    console.warn('Could not add the daily auto-archive: ' + err);
+    return false;
+  }
+}
+
+/** Moves folder names up so there are no gaps in the Folders tab. */
+function compactFolders_() {
+  const folders = sheet_(FOLDERS);
+  const last = folders.getLastRow();
+  if (last < 2) return false;
+  const range = folders.getRange(2, 1, last - 1, 1);
+  const values = range.getValues();
+  const names = uniq(values.map(function (v) { return String(v[0]).trim(); }).filter(Boolean));
+  const out = values.map(function (_v, i) { return [i < names.length ? names[i] : '']; });
+  const changed = out.some(function (v, i) { return v[0] !== String(values[i][0]).trim(); });
+  if (changed) range.setValues(out);
+  return changed;
+}
+
+function showReviewLink() {
+  const url = reviewUrl_();
+  const text = url
+    ? 'Open this on your iPhone in Safari, then Share → Add to Home Screen:\n\n' + url + '\n\nIt contains your token, so keep it to yourself.'
+    : 'Deploy the web app first (Deploy → New deployment), save one post with the Shortcut, then try again.';
+  console.log(text);
+  const ui = ui_();
+  if (ui) ui.alert('Saves: Review page', text, ui.ButtonSet.OK);
+}
+
+// Folder, ⭐, Price, Status, Who, Contact, Post, Link, Note. Sorted by folder, best rated first.
+const SHORTLIST_FORMULA =
+  '=IFERROR(LET(' +
+  ' st, Saves!I2:I,' +
+  ' f, FILTER(Saves!A2:L, Saves!E2:E<>"", (st="Shortlisted")+(st="Contacted")+(st="Booked")),' +
+  ' s, SORT(f, INDEX(f,,6), TRUE, MAP(INDEX(f,,10), LAMBDA(r, LEN(r))), FALSE),' +
+  ' HSTACK(MAP(INDEX(s,,6), LAMBDA(x, IF(x="", "📥 Inbox", x))), INDEX(s,,10), INDEX(s,,11), INDEX(s,,9),' +
+  '  INDEX(s,,3), INDEX(s,,12), INDEX(s,,4), MAP(INDEX(s,,5), LAMBDA(u, HYPERLINK(u, "Open ↗"))), INDEX(s,,7))),' +
+  ' "No shortlisted posts yet. On the Review page, tap ⭐ Shortlist.")';
+
+function setupShortlist_() {
+  const sh = getOrCreateSheet_(SHORTLIST, 1);
+  sh.getRange(1, 1, 1, 9)
+    .setValues([['Folder', '⭐', 'Price', 'Status', 'Who', 'Contact', 'Post', 'Link', 'Note']])
+    .setFontWeight('bold').setBackground('#111111').setFontColor('#ffffff');
+  sh.getRange('A2').setFormula(SHORTLIST_FORMULA);
+  sh.setFrozenRows(1);
+  sh.getRange('A2:I').setVerticalAlignment('top');
+  sh.getRange('G2:G').setWrap(true);
+  sh.getRange('I2:I').setWrap(true);
+  [150, 75, 90, 95, 110, 120, 260, 62, 160].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+}
+
+function reviewPage_(token) {
+  const ok = token && token === PropertiesService.getScriptProperties().getProperty('TOKEN');
+  const html = ok
+    ? REVIEW_HTML.split('__TOKEN__').join(JSON.stringify(String(token)).replace(/</g, '\\u003c'))
+    : '<p style="font:18px -apple-system,sans-serif;padding:24px">This Review link is out of date. ' +
+      'In the sheet, use <b>Saves → Show Review page link</b> to get the current one.</p>';
+  return HtmlService.createHtmlOutput(html)
+    .setTitle('Saves Review')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// The Review page (served by doGet with ?page=review&token=…). __TOKEN__ is filled in by reviewPage_.
+const REVIEW_HTML = `<!doctype html>
+<html><head><base target="_blank"><meta charset="utf-8">
+<style>
+:root{--bg:#f4f3ef;--card:#fff;--ink:#1b1b1b;--muted:#6b6b6b;--line:#e3e1da;--chip:#efede6;--accent:#2f6f5e;--accent-ink:#fff;--warn:#a33a2c;--gold:#d9a400}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1e1e1e;--ink:#f0f0f0;--muted:#a0a0a0;--line:#333;--chip:#2a2a2a;--accent:#5fb39b;--accent-ink:#0d1f1a;--warn:#e07a6b;--gold:#f0c040}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+header{position:sticky;top:0;z-index:2;background:var(--bg);padding:12px 16px 8px;border-bottom:1px solid var(--line)}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.top b{font-size:20px}
+#count{color:var(--muted);font-size:14px}
+.tabs{display:flex;gap:6px;margin:10px 0 8px}
+.tabs button{flex:1;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:15px}
+.tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+select,input,textarea{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
+textarea{min-height:64px;resize:vertical}
+main{padding:12px 16px 120px;max-width:560px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+.meta{color:var(--muted);font-size:14px;margin-bottom:6px}
+.meta b{color:var(--ink)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.chip{background:var(--chip);border-radius:999px;padding:2px 10px;font-size:13px}
+.text{white-space:pre-wrap;word-wrap:break-word;max-height:9.5em;overflow:hidden;position:relative}
+.text.open{max-height:none}
+.more{background:none;border:0;color:var(--accent);font:inherit;font-size:14px;padding:4px 0}
+.openpost{display:block;text-align:center;margin:10px 0 12px;padding:10px;border-radius:10px;background:var(--chip);color:var(--ink);text-decoration:none;font-weight:600}
+.stars{display:flex;gap:4px;margin:4px 0 10px}
+.stars button{flex:1;font-size:24px;padding:4px 0;border:0;background:none;color:var(--line);line-height:1}
+.stars button.on{color:var(--gold)}
+.field{margin-bottom:8px}
+.actions{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:560px;margin:0 auto}
+.actions button{padding:11px 4px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:14px;font-weight:600}
+.actions .primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.actions .no{color:var(--warn)}
+.empty{text-align:center;padding:48px 8px;color:var(--muted)}
+.empty b{display:block;font-size:22px;color:var(--ink);margin-bottom:6px}
+.empty button{margin-top:16px;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
+h3{margin:18px 0 8px;font-size:16px}
+.item{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.item .row{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+.item .snip{font-size:14px;color:var(--muted);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.item a{color:var(--accent);font-weight:600;text-decoration:none;white-space:nowrap}
+#toast{position:fixed;left:16px;right:16px;bottom:150px;max-width:528px;margin:0 auto;background:var(--ink);color:var(--bg);border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px}
+#toast button{background:none;border:0;color:var(--bg);font:inherit;font-weight:700;text-decoration:underline}
+[hidden]{display:none!important}
+</style></head><body>
+<header>
+  <div class="top"><b>🗂️ Review</b><span id="count">Loading…</span></div>
+  <div class="tabs"><button id="tabReview" class="on">To review</button><button id="tabShort">⭐ Shortlist</button></div>
+  <select id="folder" aria-label="Folder"></select>
+</header>
+<main id="review"><div class="empty">Loading your saves…</div></main>
+<main id="short" hidden></main>
+<div class="actions" id="actions" hidden>
+  <button class="primary" data-status="Shortlisted">⭐ Shortlist</button>
+  <button data-status="Contacted">📞 Contacted</button>
+  <button data-status="Booked">✅ Booked</button>
+  <button class="no" data-status="Not for us">👎 Not for us</button>
+  <button data-status="Archived">🗄️ Archive</button>
+  <button data-skip="1">⏭️ Skip</button>
+</div>
+<div id="toast" hidden><span id="toastText"></span><button id="undo" type="button">Undo</button></div>
+<script>
+var TOKEN = __TOKEN__;
+var ICONS = {Threads:'🧵', TikTok:'🎵', Instagram:'📸', YouTube:'▶️'};
+var S = {posts:[], i:0, shortlist:[], folders:[], total:0, rating:'', last:null, folder:''};
+try { S.folder = localStorage.getItem('saves.folder') || ''; } catch (e) {}
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function stars(n){ return n ? new Array(n + 1).join('⭐') : ''; }
+function starCount(r){ return (String(r || '').match(/⭐/g) || []).length; }
+
+function call(name, args, ok){
+  var r = google.script.run.withSuccessHandler(ok).withFailureHandler(function(e){ toast('⚠️ ' + (e && e.message ? e.message : e)); });
+  r[name].apply(r, args);
+}
+
+function load(){
+  call('reviewData', [TOKEN, S.folder], function(d){
+    S.posts = d.posts; S.shortlist = d.shortlist; S.folders = d.folders; S.total = d.total; S.i = 0;
+    fillFolders(); render(); renderShort();
+  });
+}
+
+function fillFolders(){
+  var sel = $('folder');
+  var opts = ['<option value="">📂 All folders</option>', '<option value="__inbox__">📥 Inbox (no folder)</option>'];
+  S.folders.forEach(function(f){
+    var parts = f.split(' / ');
+    var label = parts.length > 1 ? new Array(parts.length).join(' ') + '↳ ' + parts[parts.length - 1] : f;
+    opts.push('<option value="' + esc(f) + '">' + esc(label) + '</option>');
+  });
+  sel.innerHTML = opts.join('');
+  sel.value = S.folder;
+  if (sel.value !== S.folder) { S.folder = ''; sel.value = ''; }
+}
+
+function updateCount(){
+  var n = S.posts.length;
+  $('count').textContent = n ? n + ' to review' + (S.folder ? ' here' : '') : 'All caught up';
+}
+
+function render(){
+  updateCount();
+  var box = $('review');
+  var p = S.posts[S.i];
+  $('actions').hidden = !p || !$('short').hidden;
+  if (!p) {
+    var skipped = S.posts.length;
+    box.innerHTML = '<div class="empty"><b>🎉 All caught up</b>' +
+      (skipped ? 'You skipped ' + skipped + (skipped === 1 ? ' post.' : ' posts.') + '<br><button id="again">Go through skipped again</button>'
+               : (S.folder ? 'Nothing left to review in this folder.' : 'Nothing left to review.')) + '</div>';
+    if ($('again')) $('again').onclick = function(){ S.i = 0; render(); };
+    return;
+  }
+  S.rating = p.rating || '';
+  var folderOpts = ['<option value="">➕ Add to a folder…</option>'].concat(S.folders.filter(function(f){ return p.folders.indexOf(f) === -1; })
+    .map(function(f){ return '<option value="' + esc(f) + '">' + esc(f) + '</option>'; })).join('');
+  box.innerHTML =
+    '<div class="card">' +
+      '<div class="meta">' + (ICONS[p.source] || '🔗') + ' <b>' + esc(p.author || p.source) + '</b> · saved ' + esc(p.age) + '</div>' +
+      '<div class="chips">' + (p.folders.length ? p.folders.map(function(f){ return '<span class="chip">' + esc(f) + '</span>'; }).join('') : '<span class="chip">📥 Inbox</span>') + '</div>' +
+      '<div class="text" id="text">' + (p.text ? esc(p.text) : '<i>No text saved. Open the post to see it.</i>') + '</div>' +
+      '<button class="more" id="more" hidden>Show more</button>' +
+      '<a class="openpost" href="' + esc(p.link) + '">Open post ↗</a>' +
+      '<div class="stars" id="stars">' + [1,2,3,4,5].map(function(n){ return '<button type="button" data-n="' + n + '" aria-label="' + n + ' stars">★</button>'; }).join('') + '</div>' +
+      '<div class="field"><input id="price" placeholder="Price, e.g. RM 15,000" value="' + esc(p.price) + '"></div>' +
+      '<div class="field"><input id="contact" placeholder="Contact (phone, WhatsApp, IG)" value="' + esc(p.contact) + '"></div>' +
+      '<div class="field"><textarea id="note" placeholder="Note">' + esc(p.note) + '</textarea></div>' +
+      '<div class="field"><select id="addFolder">' + folderOpts + '</select></div>' +
+    '</div>';
+  paintStars();
+  $('stars').onclick = function(e){
+    var n = +e.target.getAttribute('data-n');
+    if (!n) return;
+    S.rating = starCount(S.rating) === n ? '' : stars(n);
+    paintStars();
+  };
+  var t = $('text');
+  if (t.scrollHeight > t.clientHeight + 4) { $('more').hidden = false; $('more').onclick = function(){ t.className = 'text open'; this.hidden = true; }; }
+  window.scrollTo(0, 0);
+}
+
+function paintStars(){
+  var n = starCount(S.rating);
+  Array.prototype.forEach.call($('stars').children, function(b, i){ b.className = i < n ? 'on' : ''; });
+}
+
+function act(status){
+  var p = S.posts[S.i];
+  if (!p) return;
+  var changes = { status: status, rating: S.rating, price: $('price').value, contact: $('contact').value, note: $('note').value, add_folder: $('addFolder').value };
+  var removed = S.posts.splice(S.i, 1)[0];
+  var undo = { post: removed, index: S.i, prev: null };
+  S.last = undo;
+  render();
+  toast(status === 'Archived' ? '🗄️ Archived' : status === 'Not for us' ? '👎 Not for us' : '✓ ' + status, true);
+  call('reviewUpdate', [TOKEN, p.id, changes], function(res){
+    undo.prev = res.prev;
+    if (SHORTLISTED.indexOf(status) !== -1) { removed.status = status; removed.rating = changes.rating; removed.price = changes.price; removed.contact = changes.contact; removed.note = changes.note; S.shortlist.push(removed); renderShort(); }
+  });
+}
+
+var SHORTLISTED = ['Shortlisted', 'Contacted', 'Booked'];
+
+$('undo').onclick = function(){
+  var u = S.last;
+  if (!u) return;
+  S.last = null;
+  $('toast').hidden = true;
+  S.posts.splice(u.index, 0, u.post);
+  S.i = u.index;
+  S.shortlist = S.shortlist.filter(function(x){ return x.id !== u.post.id; });
+  render(); renderShort();
+  var restore = function(prev){ call('reviewUpdate', [TOKEN, u.post.id, prev], function(){}); };
+  if (u.prev) restore(u.prev);
+  else { var wait = setInterval(function(){ if (u.prev) { clearInterval(wait); restore(u.prev); } }, 300); setTimeout(function(){ clearInterval(wait); }, 15000); }
+};
+
+var toastTimer;
+function toast(text, canUndo){
+  $('toastText').textContent = text;
+  $('undo').hidden = !canUndo;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ $('toast').hidden = true; }, canUndo ? 5000 : 7000);
+}
+
+$('actions').onclick = function(e){
+  var b = e.target.closest('button');
+  if (!b) return;
+  if (b.getAttribute('data-skip')) { S.i++; render(); return; }
+  act(b.getAttribute('data-status'));
+};
+
+function renderShort(){
+  var box = $('short');
+  if (!S.shortlist.length) { box.innerHTML = '<div class="empty"><b>No shortlist yet</b>Tap ⭐ Shortlist while reviewing and the post shows up here, grouped by folder.</div>'; return; }
+  var groups = {};
+  S.shortlist.forEach(function(p){ var k = p.folders[0] || '📥 Inbox'; (groups[k] = groups[k] || []).push(p); });
+  box.innerHTML = Object.keys(groups).sort().map(function(k){
+    var items = groups[k].sort(function(a, b){ return starCount(b.rating) - starCount(a.rating); });
+    return '<h3>' + esc(k) + ' · ' + items.length + '</h3>' + items.map(function(p){
+      var bits = [p.rating, p.price, p.status === 'Shortlisted' ? '' : p.status, p.contact].filter(Boolean).map(esc).join(' · ');
+      return '<div class="item"><div class="row"><span>' + (ICONS[p.source] || '🔗') + ' <b>' + esc(p.author || p.source) + '</b></span><a href="' + esc(p.link) + '">Open ↗</a></div>' +
+        (bits ? '<div class="row"><span>' + bits + '</span></div>' : '') +
+        (p.text ? '<div class="snip">' + esc(p.text) + '</div>' : '') +
+        (p.note ? '<div class="snip">📝 ' + esc(p.note) + '</div>' : '') + '</div>';
+    }).join('');
+  }).join('');
+}
+
+function showTab(review){
+  $('tabReview').className = review ? 'on' : '';
+  $('tabShort').className = review ? '' : 'on';
+  $('review').hidden = !review;
+  $('short').hidden = review;
+  $('actions').hidden = !review || !S.posts[S.i];
+}
+$('tabReview').onclick = function(){ showTab(true); };
+$('tabShort').onclick = function(){ showTab(false); };
+$('folder').onchange = function(){
+  S.folder = this.value;
+  try { localStorage.setItem('saves.folder', S.folder); } catch (e) {}
+  $('review').innerHTML = '<div class="empty">Loading…</div>';
+  load();
+};
+load();
+</script>
+</body></html>`;

@@ -11,6 +11,9 @@ Share a post from Threads, TikTok, Instagram or YouTube on your iPhone, tick one
 - **Planning columns:** Status (To check → Shortlisted → Contacted → Booked, Not for us, Archived), Rating, Price and Contact, made for comparing wedding vendors
 - **Quick note, status, rating and price while saving** (📝 Add note…, 🏷️ Status, rating & price…)
 - **Folder management that works on the phone:** rename a folder cell to rename it everywhere, clear it to remove it, drag rows to reorder
+- **Review page** for your iPhone Home Screen: one post at a time, with Shortlist / Contacted / Booked / Not for us / Archive buttons, stars, price, contact and Undo
+- **Weekly reminder** (iPhone automation) with how many saves are waiting, and **auto-archive** of posts left unreviewed for 60 days
+- **Shortlist** tab and page: everything shortlisted, grouped by folder, best rated first
 - **Post details:** author and text or caption, fetched automatically (Instagram is best effort)
 - Syncs everywhere your Google account does
 
@@ -35,6 +38,8 @@ iPhone share sheet ──► Shortcut ──► Apps Script web app (apps-script
 - `{"action":"save","input":"<shared text or URL>"}` saves the post to the Inbox and returns `{id, prompt, folders:["➕ New folder…", …], in_folders}`.
 - `{"action":"assign","id":"…","folders":"A\nB","new_folder":"Parent / Child","note":"…","status":"Shortlisted","rating":"⭐⭐⭐⭐","price":"RM 15,000"}` adds those folders and returns `{message}`.
 - `{"action":"folders"}` returns `{folders}`.
+- `{"action":"summary"}` returns `{count, message, review_url}` for the weekly reminder.
+- `GET <Web app URL>?page=review&token=…` is the Review page.
 
 On an error, the response has `error: true`, and the message is also placed in `folders`, so it shows up in the Shortcut's list.
 

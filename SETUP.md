@@ -19,7 +19,7 @@ All you need is your Google account. Do steps 1–5 on a **computer**, because A
    It asks to see and edit this spreadsheet, and to fetch post details from Threads, TikTok, Instagram and YouTube.
 4. The **Execution log** at the bottom shows your **Shortcut token** (`svs_…`). You can see it again any time later.
 
-Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Folders**.
+Back in the sheet tab you'll now have four tabs: **Browse**, **Shortlist**, **Saves** and **Folders**.
 
 ## 4. Publish it as a web app (for the Shortcut)
 1. In Apps Script, click **Deploy** (top right), then **New deployment**.
@@ -89,6 +89,30 @@ Back in the sheet tab you'll now have three tabs: **Browse**, **Saves** and **Fo
 The **Posts** column counts the posts in each folder.
 
 On a computer, the **Saves** menu also has *Rename or move folder…*, *Delete folder…* and *Fill missing post details*.
+
+## Reviewing your saves (so they don't pile up)
+
+### Review page on your Home Screen
+1. On a computer, open the sheet and choose **Saves → Show Review page link**. Send the link to your iPhone, e.g. AirDrop it or paste it into Notes.
+2. On the iPhone, open the link in **Safari**, tap **Share → Add to Home Screen**, and name it **Review**.
+
+The link contains your token, so don't share it. If you ever use *Make a new token*, get a new link.
+
+The page shows **one post at a time**, newest first, for every post still *To check*:
+- Pick a folder at the top to review just that folder, or **📥 Inbox** for unfiled posts.
+- Tap the ★ stars, type a price, contact or note, or **➕ Add to a folder**.
+- Then tap **⭐ Shortlist**, **📞 Contacted**, **✅ Booked**, **👎 Not for us** or **🗄️ Archive**. The next post appears straight away.
+- **⏭️ Skip** leaves it for later. **Undo** in the toast puts the last post back.
+- The **⭐ Shortlist** tab lists everything Shortlisted, Contacted or Booked, grouped by folder with stars, price and contact. Use it when you're calling vendors.
+
+### Weekly reminder
+Set up the iPhone automation in [SHORTCUT.md](SHORTCUT.md#weekly-review-reminder). Every week it shows something like *"🗂️ 12 saves to review (5 Venue Tunang, 4 Attire, 3 Inbox)"* and opens the Review page.
+
+### Auto-archive after 60 days
+Every night, posts still *To check* after **60 days** are set to **Archived**. Nothing is deleted. To see them, pick **Archived** in Browse's 🏷️ Status. To run it right away, use **Saves → Archive unreviewed posts older than 60 days**.
+
+### Shortlist tab (in the sheet)
+The **Shortlist** tab lists every Shortlisted, Contacted or Booked post, grouped by folder and best rated first, with price, contact and notes. It updates by itself.
 
 ## Updating the script later
 1. Paste the new code into Apps Script and save.
