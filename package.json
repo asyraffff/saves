@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:live": "node tests/live.mjs"
+    "test:live": "node tests/live.mjs",
+    "preview": "node tests/preview.mjs"
   },
   "devDependencies": {
     "vitest": "^5.1.0"

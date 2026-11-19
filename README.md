@@ -49,6 +49,7 @@ On an error, the response has `error: true`, and the message is also placed in `
 npm install
 npm test           # Code.js against an in-memory fake of SpreadsheetApp/UrlFetchApp
 npm run test:live  # parsers against real Threads/TikTok pages
+npm run preview    # the Review page on http://localhost:5178 with sample posts (/reset starts over)
 ```
 
 The earlier web-app version (React PWA + Supabase + Vercel) is at the git tag `v0-pwa-supabase`.

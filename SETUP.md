@@ -127,6 +127,7 @@ Your Web app URL stays the same, so the Shortcut keeps working.
 npm install
 npm test           # runs Code.js against a fake in-memory spreadsheet
 npm run test:live  # checks the Threads/TikTok parsers against real pages
+npm run preview    # the Review page on http://localhost:5178 with sample posts (/reset starts over)
 ```
 
 The earlier web-app version (React + Supabase + Vercel) is kept at the git tag `v0-pwa-supabase`.
