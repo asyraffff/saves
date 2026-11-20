@@ -261,7 +261,7 @@ function cleanUpJunkFolders_() {
         if (removed.indexOf(f) === -1) removed.push(f);
         return false;
       });
-      return [kept.join(SEP)];
+      return [safeCell(kept.join(SEP))];
     }));
   }
   return uniq(removed);
@@ -817,7 +817,7 @@ function applyFolderChange_(oldName, newName) {
       const before = String(r[0]);
       const after = newName ? renameInCell(before, oldName, newName) : removeFromCell(before, oldName);
       if (after !== splitFolders(before).join(SEP)) changed++;
-      return [after];
+      return [safeCell(after)];
     });
     range.setValues(values);
   }
@@ -831,8 +831,8 @@ function applyFolderChange_(oldName, newName) {
     const vals = fr.getValues().map(function (r) {
       const f = cleanFolderName(r[0]);
       const l = f.toLowerCase();
-      if (l.indexOf(o + ' / ') === 0) return [newName ? newName + f.slice(oldName.length) : ''];
-      return [r[0]];
+      if (l.indexOf(o + ' / ') === 0) return [newName ? safeCell(newName + f.slice(oldName.length)) : ''];
+      return [safeCell(r[0])];
     });
     fr.setValues(vals);
     if (!newName) removeBlankFolderRows_();
@@ -863,10 +863,10 @@ function onEdit(e) {
     if (!oldValue) {
       // New folder typed in: tidy it up.
       const clean = cleanFolderName(newValue);
-      if (clean && clean !== newValue) e.range.setValue(clean);
+      if (clean && clean !== newValue) e.range.setValue(safeCell(clean));
       return;
     }
-    if (newValue) e.range.setValue(cleanFolderName(newValue));
+    if (newValue) e.range.setValue(safeCell(cleanFolderName(newValue)));
     applyFolderChange_(oldValue, newValue);
     if (!newValue) removeBlankFolderRows_();
   } catch (err) {
@@ -932,7 +932,7 @@ function renameFolderPrompt() {
   const folders = sheet_(FOLDERS);
   const names = folders.getRange(2, 1, Math.max(lastFolderRow_(folders) - 1, 1), 1).getValues();
   for (let i = 0; i < names.length; i++) {
-    if (cleanFolderName(names[i][0]).toLowerCase() === oldName.toLowerCase()) folders.getRange(i + 2, 1).setValue(newName);
+    if (cleanFolderName(names[i][0]).toLowerCase() === oldName.toLowerCase()) folders.getRange(i + 2, 1).setValue(safeCell(newName));
   }
   const n = applyFolderChange_(oldName, newName);
   ensureFolder_(newName);
@@ -1167,7 +1167,13 @@ function showToken() {
 
 function resetToken() {
   const ui = ui_();
-  if (ui && ui.alert('Make a new token?', 'Your current Shortcut will stop working until you paste the new token into it.', ui.ButtonSet.OK_CANCEL) !== ui.Button.OK) return;
+  // Only from the Sheets menu, after you confirm. (Public functions can also be reached from
+  // a web page, so never change the token without the confirmation dialog.)
+  if (!ui) {
+    console.log('Use Saves → Make a new token in the sheet to change the token.');
+    return;
+  }
+  if (ui.alert('Make a new token?', 'Your current Shortcut will stop working until you paste the new token into it.', ui.ButtonSet.OK_CANCEL) !== ui.Button.OK) return;
   newToken_();
   showToken();
 }
@@ -1357,7 +1363,7 @@ function archiveOld_(now, days) {
       n++;
       return ['Archived'];
     }
-    return [r.status];
+    return [safeCell(r.status)];
   });
   if (n) sheet.getRange(2, COL.status, rows.length, 1).setValues(values);
   return n;
@@ -1382,8 +1388,8 @@ function compactFolders_() {
   const range = folders.getRange(2, 1, last - 1, 1);
   const values = range.getValues();
   const names = uniq(values.map(function (v) { return String(v[0]).trim(); }).filter(Boolean));
-  const out = values.map(function (_v, i) { return [i < names.length ? names[i] : '']; });
-  const changed = out.some(function (v, i) { return v[0] !== String(values[i][0]).trim(); });
+  const changed = values.some(function (v, i) { return String(v[0]).trim() !== (i < names.length ? names[i] : ''); });
+  const out = values.map(function (_v, i) { return [i < names.length ? safeCell(names[i]) : '']; });
   if (changed) range.setValues(out);
   return changed;
 }
@@ -1423,10 +1429,14 @@ function setupShortlist_() {
 
 function reviewPage_(token) {
   const ok = token && token === PropertiesService.getScriptProperties().getProperty('TOKEN');
-  const html = ok
-    ? REVIEW_HTML.split('__TOKEN__').join(JSON.stringify(String(token)).replace(/</g, '\\u003c'))
-    : '<p style="font:18px -apple-system,sans-serif;padding:24px">This Review link is out of date. ' +
-      'In the sheet, use <b>Saves → Show Review page link</b> to get the current one.</p>';
+  // Without the right token, answer with plain text, not an HtmlService page: any HtmlService page
+  // lets its visitor call this script's public functions through google.script.run.
+  if (!ok) {
+    return ContentService.createTextOutput(
+      'This Review link is out of date. In the sheet, use Saves → Show Review page link to get the current one.',
+    ).setMimeType(ContentService.MimeType.TEXT);
+  }
+  const html = REVIEW_HTML.split('__TOKEN__').join(JSON.stringify(String(token)).replace(/</g, '\\u003c'));
   return HtmlService.createHtmlOutput(html)
     .setTitle('Saves Review')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -1434,7 +1444,7 @@ function reviewPage_(token) {
 
 // The Review page (served by doGet with ?page=review&token=…). __TOKEN__ is filled in by reviewPage_.
 const REVIEW_HTML = `<!doctype html>
-<html><head><base target="_blank"><meta charset="utf-8">
+<html><head><base target="_blank"><meta charset="utf-8"><meta name="referrer" content="no-referrer">
 <style>
 :root{--bg:#f4f3ef;--card:#fff;--ink:#1b1b1b;--muted:#6b6b6b;--line:#e3e1da;--chip:#efede6;--accent:#2f6f5e;--accent-ink:#fff;--warn:#a33a2c;--gold:#d9a400}
 @media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1e1e1e;--ink:#f0f0f0;--muted:#a0a0a0;--line:#333;--chip:#2a2a2a;--accent:#5fb39b;--accent-ink:#0d1f1a;--warn:#e07a6b;--gold:#f0c040}}
@@ -1503,6 +1513,8 @@ try { S.folder = localStorage.getItem('saves.folder') || ''; } catch (e) {}
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function webUrl(u){ return /^https?:\\/\\//i.test(String(u || '')) ? String(u) : ''; }
+function link(u, cls, text){ var w = webUrl(u); return w ? '<a' + (cls ? ' class="' + cls + '"' : '') + ' href="' + esc(w) + '" rel="noopener noreferrer">' + text + '</a>' : ''; }
 function stars(n){ return n ? new Array(n + 1).join('⭐') : ''; }
 function starCount(r){ return (String(r || '').match(/⭐/g) || []).length; }
 
@@ -1558,7 +1570,7 @@ function render(){
       '<div class="chips">' + (p.folders.length ? p.folders.map(function(f){ return '<span class="chip">' + esc(f) + '</span>'; }).join('') : '<span class="chip">📥 Inbox</span>') + '</div>' +
       '<div class="text" id="text">' + (p.text ? esc(p.text) : '<i>No text saved. Open the post to see it.</i>') + '</div>' +
       '<button class="more" id="more" hidden>Show more</button>' +
-      '<a class="openpost" href="' + esc(p.link) + '">Open post ↗</a>' +
+      link(p.link, 'openpost', 'Open post ↗') +
       '<div class="stars" id="stars">' + [1,2,3,4,5].map(function(n){ return '<button type="button" data-n="' + n + '" aria-label="' + n + ' stars">★</button>'; }).join('') + '</div>' +
       '<div class="field"><input id="price" placeholder="Price, e.g. RM 15,000" value="' + esc(p.price) + '"></div>' +
       '<div class="field"><input id="contact" placeholder="Contact (phone, WhatsApp, IG)" value="' + esc(p.contact) + '"></div>' +
@@ -1638,7 +1650,7 @@ function renderShort(){
     var items = groups[k].sort(function(a, b){ return starCount(b.rating) - starCount(a.rating); });
     return '<h3>' + esc(k) + ' · ' + items.length + '</h3>' + items.map(function(p){
       var bits = [p.rating, p.price, p.status === 'Shortlisted' ? '' : p.status, p.contact].filter(Boolean).map(esc).join(' · ');
-      return '<div class="item"><div class="row"><span>' + (ICONS[p.source] || '🔗') + ' <b>' + esc(p.author || p.source) + '</b></span><a href="' + esc(p.link) + '">Open ↗</a></div>' +
+      return '<div class="item"><div class="row"><span>' + (ICONS[p.source] || '🔗') + ' <b>' + esc(p.author || p.source) + '</b></span>' + link(p.link, '', 'Open ↗') + '</div>' +
         (bits ? '<div class="row"><span>' + bits + '</span></div>' : '') +
         (p.text ? '<div class="snip">' + esc(p.text) + '</div>' : '') +
         (p.note ? '<div class="snip">📝 ' + esc(p.note) + '</div>' : '') + '</div>';

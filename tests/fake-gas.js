@@ -111,8 +111,8 @@ export function loadScript({ fetch: fetchImpl } = {}) {
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: { getUuid: () => randomUUID() },
     ContentService: {
-      MimeType: { JSON: 'json' },
-      createTextOutput: (s) => ({ setMimeType: () => ({ body: s, json: () => JSON.parse(s) }) }),
+      MimeType: { JSON: 'json', TEXT: 'text' },
+      createTextOutput: (s) => ({ setMimeType: () => ({ body: s, getContent: () => s, json: () => JSON.parse(s) }) }),
     },
     ScriptApp: {
       getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }),

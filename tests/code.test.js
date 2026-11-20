@@ -399,7 +399,9 @@ describe('review page, summary, auto-archive', () => {
     expect(page.title).toBe('Saves Review');
     expect(page.getContent()).toContain(JSON.stringify(token));
     expect(page.getContent()).not.toContain('__TOKEN__');
-    expect(gas.doGet({ parameter: { page: 'review', token: 'x' } }).getContent()).toContain('out of date');
+    const bad = gas.doGet({ parameter: { page: 'review', token: 'x' } });
+    expect(bad.getContent()).toContain('out of date');
+    expect(bad.title).toBeUndefined(); // plain text, not an HtmlService page
   });
 
   it('summary counts posts to review by folder and links the Review page', () => {
@@ -432,5 +434,55 @@ describe('review page, summary, auto-archive', () => {
     gas.setup();
     expect(env.sheets.get('Shortlist').formulas['2,1']).toContain('FILTER(Saves!A2:L');
     expect(env.triggers.filter((t) => t === 'autoArchive')).toHaveLength(1);
+  });
+});
+
+describe('security fixes', () => {
+  it('resetToken does nothing outside the Sheets menu', () => {
+    const before = env.props.get('TOKEN');
+    gas.resetToken();
+    expect(env.props.get('TOKEN')).toBe(before);
+  });
+
+  // Records what the script writes, before the fake strips Sheets' leading apostrophe.
+  const recordWrites = (name) => {
+    const sheet = env.sheets.get(name);
+    const raw = [];
+    const set = sheet.set.bind(sheet);
+    sheet.set = (r, c, v) => { raw.push(v); set(r, c, v); };
+    return raw;
+  };
+
+  it('folder names that look like formulas stay text when folders are compacted', () => {
+    env.sheets.get('Folders').set(1001, 1, '=IMAGE("x")'); // as read back from the sheet
+    const raw = recordWrites('Folders');
+    gas.setup();
+    expect(raw).toContain(`'=IMAGE("x")`);
+    expect(raw).not.toContain('=IMAGE("x")');
+  });
+
+  it('renaming and cleaning folders keep formula-looking names as text', () => {
+    const s = post({ action: 'save', input: 'https://www.threads.com/@a/post/X1' });
+    post({ action: 'assign', id: s.id, folders: 'Ideas' });
+    const raw = recordWrites('Saves');
+    gas.applyFolderChange_('Ideas', '+1 Ideas');
+    expect(raw).toContain("'+1 Ideas");
+    env.sheets.get('Saves').set(2, 6, '=1+1, Chosen');
+    raw.length = 0;
+    gas.setup(); // junk-folder cleanup rewrites the Folders column
+    expect(raw).toContain("'=1+1");
+  });
+
+  it('the Review page only links to web addresses and sends no referrer', () => {
+    const html = gas.doGet({ parameter: { page: 'review', token } }).getContent();
+    expect(html).toContain('<meta name="referrer" content="no-referrer">');
+    expect(html).toContain('rel="noopener noreferrer"');
+    const m = html.match(/function webUrl\(u\)\{ return (\/.*?\/i)\.test/);
+    const re = eval(m[1]);
+    expect(re.test('https://www.threads.com/x')).toBe(true);
+    expect(re.test('javascript:alert(1)')).toBe(false);
+    // The page script must still parse.
+    const script = html.split('<script>')[1].split('</script>')[0];
+    expect(() => new Function(script)).not.toThrow();
   });
 });

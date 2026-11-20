@@ -92,4 +92,4 @@ http
     res.setHeader('content-type', 'text/html; charset=utf-8');
     res.end(html);
   })
-  .listen(PORT, () => console.log(`Review page preview: http://localhost:${PORT}  (sample data; /reset starts over)`));
+  .listen(PORT, '127.0.0.1', () => console.log(`Review page preview: http://localhost:${PORT}  (sample data; /reset starts over)`));
